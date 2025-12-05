@@ -1,0 +1,8 @@
+WindowShapes/__pycache__/
+WindowShapes/HorizontalAlign/
+WindowShapes/Polygons/
+WindowShapes/Masks/WindowMasks/
+WindowShapes/Masks/
+WindowShapes/sam3/
+
+venv/
