@@ -7,9 +7,11 @@ from random import shuffle
 
 from config import (
     HORIZONTAL_ALIGN_IMAGES as IMAGE_FOLDER,
-    WINDOW_MASK_FOLDER,
-    SIDE_MIRROR_MASK_FOLDER as MIRROR_MASK_FOLDER
+    PROCESSED_MASK_FOLDER as WINDOW_MASK_FOLDER
+    #WINDOW_MASK_FOLDER,
+    #SIDE_MIRROR_MASK_FOLDER as MIRROR_MASK_FOLDER
 )
+MIRROR_MASK_FOLDER = None
 
 
 def addMasksToOverlay(masks, mask_overlay, image_size, color):
@@ -80,11 +82,12 @@ def visualizeMasksOnImage(imageName):
         window_combined = combineMasks(window_masks)
 
     # Load mirror masks
-    mirror_mask_path = os.path.join(MIRROR_MASK_FOLDER, f"{imageName.split('.')[0]}.pt")
     mirror_combined = None
-    if os.path.exists(mirror_mask_path):
-        mirror_masks = torch.load(mirror_mask_path)
-        mirror_combined = combineMasks(mirror_masks)
+    if MIRROR_MASK_FOLDER is not None:
+        mirror_mask_path = os.path.join(MIRROR_MASK_FOLDER, f"{imageName.split('.')[0]}.pt")
+        if os.path.exists(mirror_mask_path):
+            mirror_masks = torch.load(mirror_mask_path)
+            mirror_combined = combineMasks(mirror_masks)
 
     # Create a blank image for the masks with the same size as the original image
     mask_overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))

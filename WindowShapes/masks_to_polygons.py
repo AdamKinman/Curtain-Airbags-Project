@@ -16,23 +16,29 @@ x1 y1 x2 y2 x3 y3 ... xn yn (each x, y pair is a corner of a polygon sorted coun
 '''
 
 
-def loadProcessedMask(baseFileName):
+def loadProcessedMasks(baseFileName):
     """
-    Load an already processed mask from the MASK_FOLDER.
+    Load processed masks from the MASK_FOLDER.
     
     Args:
         baseFileName: Base name of the mask file (without extension)
     
     Returns:
-        2D boolean tensor of the processed mask
+        List of 2D boolean tensors, one for each mask
     """
-    mask = torch.load(os.path.join(MASK_FOLDER, baseFileName + ".pt"))
-    # Handle different possible shapes - extract 2D mask
-    if len(mask.shape) == 4:
-        return mask[0, 0]
-    elif len(mask.shape) == 3:
-        return mask[0]
-    return mask
+    masks = torch.load(os.path.join(MASK_FOLDER, baseFileName + ".pt"))
+    
+    # Handle different possible shapes - return list of 2D masks
+    if len(masks.shape) == 4:
+        # Shape: (N, C, H, W) - extract each mask
+        return [masks[i, 0] > 0 for i in range(masks.shape[0])]
+    elif len(masks.shape) == 3:
+        # Shape: (N, H, W) - each slice is a mask
+        return [masks[i] > 0 for i in range(masks.shape[0])]
+    elif len(masks.shape) == 2:
+        # Single 2D mask
+        return [masks > 0]
+    return [masks]
 
 
 def maskToPolygons(mask):
@@ -99,10 +105,13 @@ def run():
     for mask_file in mask_files:
         baseFileName = mask_file.split('.')[0]
         try:
-            mask = loadProcessedMask(baseFileName)
-            polygons = maskToPolygons(mask)
+            masks = loadProcessedMasks(baseFileName)
+            all_polygons = []
+            for mask in masks:
+                polygons = maskToPolygons(mask)
+                all_polygons.extend(polygons)
             with open(os.path.join(OUTPUT_FOLDER, f"{baseFileName}.txt"), 'w') as f:
-                for polygon in polygons:
+                for polygon in all_polygons:
                     f.write(' '.join(map(str, polygon)) + '\n')
         except Exception as e:
             print(f"Error processing {mask_file}: {e}")
