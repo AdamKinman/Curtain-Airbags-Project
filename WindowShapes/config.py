@@ -17,4 +17,6 @@ HORIZONTAL_ALIGN_DIR = os.path.join(BASE_DIR, "HorizontalAlign")
 HORIZONTAL_ALIGN_IMAGES = os.path.join(HORIZONTAL_ALIGN_DIR, "Images")
 ROTATED_LABELS_FOLDER = os.path.join(HORIZONTAL_ALIGN_DIR, "RotatedLabels")
 
+DXF_FOLDER = os.path.join(BASE_DIR, "DXF")
+
 POLYGON_CORNERS = 10
