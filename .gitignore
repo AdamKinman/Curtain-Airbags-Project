@@ -7,5 +7,6 @@ WindowShapes/sam3/
 WindowShapes/DXF/
 WindowShapes/ScaledDXF/
 WindowShapes/GeneratedImages/
+WindowShapes/.env
 
 venv/

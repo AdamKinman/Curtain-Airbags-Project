@@ -13,6 +13,7 @@ from google import genai
 from google.genai import types
 
 from image_files import is_image_file
+from pathlib import Path
 
 from config import (
     ORIGINAL_IMAGE_FOLDER,
@@ -20,8 +21,28 @@ from config import (
     SCALED_DXF_FOLDER
 )
 
-# Gemini API key
-API_KEY = "AIzaSyAk2F3GQejOap1ZVohr5REhE485No9bEHI"
+# Load GEMINI_API_KEY from a local .env file
+
+def _load_dotenv_local(env_path: Path) -> None:
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key, value)
+
+_load_dotenv_local(Path(__file__).with_name(".env"))
+
+API_KEY = os.getenv("GEMINI_API_KEY")
+if not API_KEY:
+    raise RuntimeError(
+        "Missing GEMINI_API_KEY. Define it in a .env file in the WindowShapes folder "
+        "or in the environment."
+    )
 
 # Prompt template for Gemini to estimate window dimensions
 DIMENSION_PROMPT = """
