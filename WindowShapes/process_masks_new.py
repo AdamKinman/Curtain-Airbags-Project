@@ -176,7 +176,7 @@ def fitCubic(points):
 
 def extrapolateOutlineBehindMirror(windowMask, mirrorMask, corners, 
                                    cornerDistanceThreshold=15, 
-                                   excludeNearCorner=10,
+                                   excludeNearCorner=15,
                                    minPointsForFit=20,
                                    useCubic=True):
     """
@@ -634,7 +634,7 @@ def updateMask(frontMask, cornerNearMirror1, cornerNearMirror2, curve1, curve2, 
     return torch.from_numpy(smoothed > 0)
 
 
-def smoothMask(mask,smoothingKernel=5,iterations=4):
+def smoothMask(mask,smoothingKernel=5,iterations=7):
     if iterations < 1: return mask
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (smoothingKernel, smoothingKernel))
     smoothed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
@@ -824,10 +824,184 @@ def processAndSaveMasks():
     print(f"\nProcessing complete. Masks saved to {PROCESSED_MASK_FOLDER}")
 
 
+def displayMask(baseName):
+    """
+    Display a single image with window masks overlaid.
+    Front window is shown in a different color, with corner markers.
+    
+    Args:
+        baseName: Base file name (without extension) of the image to display
+    """
+    windowMaskPath = os.path.join(WINDOW_MASK_FOLDER, f"{baseName}.pt")
+    mirrorMaskPath = os.path.join(MIRROR_MASK_FOLDER, f"{baseName}.pt")
+    imagePath = os.path.join(IMAGE_FOLDER, f"{baseName}.jpg")
+    
+    if not os.path.exists(windowMaskPath):
+        print(f"Window mask not found: {windowMaskPath}")
+        return
+    
+    if not os.path.exists(imagePath):
+        print(f"Image not found: {imagePath}")
+        return
+    
+    # Load image
+    image = Image.open(imagePath)
+    image = image.convert("RGBA")
+    
+    # Load window masks - tensor shape is (num_masks, 1, H, W)
+    windowMasksTensor = torch.load(windowMaskPath)
+    # Convert to list of 2D masks
+    windowMasks = [squeezeMask(windowMasksTensor[i]) for i in range(windowMasksTensor.shape[0])]
+    
+    # Load mirror mask to identify front window
+    mirrorMask = None
+    if os.path.exists(mirrorMaskPath):
+        mirrorMasksTensor = torch.load(mirrorMaskPath)
+        if mirrorMasksTensor.ndim >= 3 and mirrorMasksTensor.shape[0] > 0:
+            # Combine all mirror masks into one (along the first dimension)
+            mirrorMask = squeezeMask(mirrorMasksTensor[0])
+            for i in range(1, mirrorMasksTensor.shape[0]):
+                mirrorMask = torch.logical_or(mirrorMask, squeezeMask(mirrorMasksTensor[i]))
+        elif mirrorMasksTensor.ndim == 2:
+            mirrorMask = mirrorMasksTensor
+    
+    # Identify front window (closest to mirror)
+    frontWindowIdx = None
+    if mirrorMask is not None and len(windowMasks) > 0:
+        frontWindowIdx = getFrontWindowIndex(windowMasks, mirrorMask)
+    
+    # Process front window mask - get updated mask with extrapolation
+    updatedFrontMask = None
+    corners = None
+    extrapolatedCurves = None
+    intersectionPt = None
+    cornersNearMirror = None
+    daylightOpeningsRect = None
+    
+    if frontWindowIdx is not None:
+        frontMask = windowMasks[frontWindowIdx]
+        corners = identifyCorners(frontMask)
+        
+        # Load rotated labels for daylight openings
+        rotatedLabelPath = os.path.join(ROTATED_LABELS_FOLDER, f"{baseName}.txt")
+        if os.path.exists(rotatedLabelPath):
+            with open(rotatedLabelPath, 'r') as f:
+                rotatedLabelText = f.read()
+            rotatedLabels = rotatedLabelsToDict(rotatedLabelText)
+            if DAYLIGHT_OPENINGS_LABEL_KEY in rotatedLabels and rotatedLabels[DAYLIGHT_OPENINGS_LABEL_KEY]:
+                daylightOpeningsNorm = rotatedLabels[DAYLIGHT_OPENINGS_LABEL_KEY][0]
+                imgWidth, imgHeight = image.size
+                daylightOpeningsRect = [(x * imgWidth, y * imgHeight) for x, y in daylightOpeningsNorm]
+        
+        # Get extrapolated curves behind mirror
+        if mirrorMask is not None and corners:
+            extrapolatedCurves = extrapolateOutlineBehindMirror(frontMask, mirrorMask, corners, useCubic=False)
+            cornersNearMirror = getCornersNearMirror(frontMask, mirrorMask, corners)
+            
+            # Find intersection point
+            if extrapolatedCurves is not None and daylightOpeningsRect is not None:
+                intersectionPt = getIntersectionPoint(
+                    extrapolatedCurves[0], 
+                    extrapolatedCurves[1], 
+                    daylightOpeningsRect, 
+                    mirrorMask,
+                )
+            
+            # Update the mask
+            if cornersNearMirror is not None and extrapolatedCurves is not None:
+                updatedFrontMask = updateMask(
+                    frontMask,
+                    cornersNearMirror[0],
+                    cornersNearMirror[1],
+                    extrapolatedCurves[0],
+                    extrapolatedCurves[1],
+                    intersectionPt
+                )
+            else:
+                # Just smooth the original mask
+                updatedFrontMask = updateMask(frontMask, None, None, None, None, None)
+        else:
+            # Just smooth the original mask
+            updatedFrontMask = updateMask(frontMask, None, None, None, None, None)
+    
+    # Create overlay for masks
+    maskOverlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    
+    # Colors
+    #frontWindowColor = (0, 255, 0, 128)  # Green for front window
+    frontWindowColor = (255, 0, 0, 128)
+    otherWindowColor = (255, 0, 0, 128)  # Red for other windows
+    
+    # Draw each window mask
+    for i, mask in enumerate(windowMasks):
+        # Use updated mask for front window
+        #if i == frontWindowIdx and updatedFrontMask is not None:
+        #    maskNp = updatedFrontMask.cpu().numpy() > 0
+        #else:
+        #    maskNp = mask.cpu().numpy() > 0
+        maskNp = mask.cpu().numpy() > 0
+        
+        color = frontWindowColor if i == frontWindowIdx else otherWindowColor
+        
+        maskUint8 = (maskNp * 255).astype(np.uint8)
+        maskPil = Image.fromarray(maskUint8, mode='L')
+        singleMaskImg = Image.new("RGBA", image.size, (0, 0, 0, 0))
+        singleMaskImg.paste(color, (0, 0), mask=maskPil)
+        maskOverlay = Image.alpha_composite(maskOverlay, singleMaskImg)
+    
+    # Combine image with mask overlay
+    resultImage = Image.alpha_composite(image, maskOverlay)
+    
+    # Convert to numpy for matplotlib
+    resultNp = np.array(resultImage)
+    
+    # Display the image
+    plt.figure(figsize=(12, 8))
+    plt.imshow(resultNp)
+    
+    # Add corner markers for front window
+    if frontWindowIdx is not None and corners:
+        # Plot corner markers
+        cornerX = [c[0] for c in corners]
+        cornerY = [c[1] for c in corners]
+        #plt.scatter(cornerX, cornerY, c='yellow', s=30, marker='o', edgecolors='black', linewidths=1, zorder=5)
+        
+        # Plot extrapolated curves if available
+        if extrapolatedCurves is not None:
+            imgWidth, imgHeight = image.size
+            xValues = np.arange(0, imgWidth)
+            
+            # Plot first curve (before first corner)
+            y1 = evalPolynomial(extrapolatedCurves[0], xValues)
+            # Clip to image bounds
+            mask1 = (y1 >= 0) & (y1 < imgHeight)
+            plt.plot(xValues[mask1], y1[mask1], 'c-', linewidth=5, label='Curve 1 (before)', zorder=6)
+            
+            # Plot second curve (after last corner)
+            y2 = evalPolynomial(extrapolatedCurves[1], xValues)
+            # Clip to image bounds
+            mask2 = (y2 >= 0) & (y2 < imgHeight)
+            plt.plot(xValues[mask2], y2[mask2], 'm-', linewidth=5, label='Curve 2 (after)', zorder=6)
+            
+            # Plot intersection point if found
+            if intersectionPt is not None:
+                plt.scatter([intersectionPt[0]], [intersectionPt[1]], 
+                           c='white', s=100, marker='*', edgecolors='black', 
+                           linewidths=2, zorder=7, label='Intersection')
+            
+            plt.legend(loc='upper right')
+    
+    plt.title(f"{baseName}.jpg - Front window: green, Others: red, Corners: yellow")
+    plt.axis('off')
+    plt.xlim(0, image.size[0])
+    plt.ylim(image.size[1], 0)  # Inverted y-axis for image coordinates
+    plt.show()
+
+
 def displayProcessedMasks():
     """
     Display images with window masks overlaid.
-    Front window is shown in a different color, with corner markers.
+    Iterates through all images and calls displayMask for each.
     """
     files = os.listdir(IMAGE_FOLDER)
     shuffle(files)
@@ -837,163 +1011,9 @@ def displayProcessedMasks():
             continue
         
         baseName = file.split('.')[0]
-        windowMaskPath = os.path.join(WINDOW_MASK_FOLDER, f"{baseName}.pt")
-        mirrorMaskPath = os.path.join(MIRROR_MASK_FOLDER, f"{baseName}.pt")
-        
-        if not os.path.exists(windowMaskPath):
-            continue
-        
-        # Load image
-        image = Image.open(os.path.join(IMAGE_FOLDER, file))
-        image = image.convert("RGBA")
-        
-        # Load window masks - tensor shape is (num_masks, 1, H, W)
-        windowMasksTensor = torch.load(windowMaskPath)
-        # Convert to list of 2D masks
-        windowMasks = [squeezeMask(windowMasksTensor[i]) for i in range(windowMasksTensor.shape[0])]
-        
-        # Load mirror mask to identify front window
-        mirrorMask = None
-        if os.path.exists(mirrorMaskPath):
-            mirrorMasksTensor = torch.load(mirrorMaskPath)
-            if mirrorMasksTensor.ndim >= 3 and mirrorMasksTensor.shape[0] > 0:
-                # Combine all mirror masks into one (along the first dimension)
-                mirrorMask = squeezeMask(mirrorMasksTensor[0])
-                for i in range(1, mirrorMasksTensor.shape[0]):
-                    mirrorMask = torch.logical_or(mirrorMask, squeezeMask(mirrorMasksTensor[i]))
-            elif mirrorMasksTensor.ndim == 2:
-                mirrorMask = mirrorMasksTensor
-        
-        # Identify front window (closest to mirror)
-        frontWindowIdx = None
-        if mirrorMask is not None and len(windowMasks) > 0:
-            frontWindowIdx = getFrontWindowIndex(windowMasks, mirrorMask)
-        
-        # Process front window mask - get updated mask with extrapolation
-        updatedFrontMask = None
-        corners = None
-        extrapolatedCurves = None
-        intersectionPt = None
-        cornersNearMirror = None
-        daylightOpeningsRect = None
-        
-        if frontWindowIdx is not None:
-            frontMask = windowMasks[frontWindowIdx]
-            corners = identifyCorners(frontMask)
-            
-            # Load rotated labels for daylight openings
-            rotatedLabelPath = os.path.join(ROTATED_LABELS_FOLDER, f"{baseName}.txt")
-            if os.path.exists(rotatedLabelPath):
-                with open(rotatedLabelPath, 'r') as f:
-                    rotatedLabelText = f.read()
-                rotatedLabels = rotatedLabelsToDict(rotatedLabelText)
-                if DAYLIGHT_OPENINGS_LABEL_KEY in rotatedLabels and rotatedLabels[DAYLIGHT_OPENINGS_LABEL_KEY]:
-                    daylightOpeningsNorm = rotatedLabels[DAYLIGHT_OPENINGS_LABEL_KEY][0]
-                    imgWidth, imgHeight = image.size
-                    daylightOpeningsRect = [(x * imgWidth, y * imgHeight) for x, y in daylightOpeningsNorm]
-            
-            # Get extrapolated curves behind mirror
-            if mirrorMask is not None and corners:
-                extrapolatedCurves = extrapolateOutlineBehindMirror(frontMask, mirrorMask, corners, useCubic=False)
-                cornersNearMirror = getCornersNearMirror(frontMask, mirrorMask, corners)
-                
-                # Find intersection point
-                if extrapolatedCurves is not None and daylightOpeningsRect is not None:
-                    intersectionPt = getIntersectionPoint(
-                        extrapolatedCurves[0], 
-                        extrapolatedCurves[1], 
-                        daylightOpeningsRect, 
-                        mirrorMask,
-                    )
-                
-                # Update the mask
-                if cornersNearMirror is not None and extrapolatedCurves is not None:
-                    updatedFrontMask = updateMask(
-                        frontMask,
-                        cornersNearMirror[0],
-                        cornersNearMirror[1],
-                        extrapolatedCurves[0],
-                        extrapolatedCurves[1],
-                        intersectionPt
-                    )
-                else:
-                    # Just smooth the original mask
-                    updatedFrontMask = updateMask(frontMask, None, None, None, None, None)
-            else:
-                # Just smooth the original mask
-                updatedFrontMask = updateMask(frontMask, None, None, None, None, None)
-        
-        # Create overlay for masks
-        maskOverlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
-        
-        # Colors
-        frontWindowColor = (0, 255, 0, 128)  # Green for front window
-        otherWindowColor = (255, 0, 0, 128)  # Red for other windows
-        
-        # Draw each window mask
-        for i, mask in enumerate(windowMasks):
-            # Use updated mask for front window
-            if i == frontWindowIdx and updatedFrontMask is not None:
-                maskNp = updatedFrontMask.cpu().numpy() > 0
-            else:
-                maskNp = mask.cpu().numpy() > 0
-            
-            color = frontWindowColor if i == frontWindowIdx else otherWindowColor
-            
-            maskUint8 = (maskNp * 255).astype(np.uint8)
-            maskPil = Image.fromarray(maskUint8, mode='L')
-            singleMaskImg = Image.new("RGBA", image.size, (0, 0, 0, 0))
-            singleMaskImg.paste(color, (0, 0), mask=maskPil)
-            maskOverlay = Image.alpha_composite(maskOverlay, singleMaskImg)
-        
-        # Combine image with mask overlay
-        resultImage = Image.alpha_composite(image, maskOverlay)
-        
-        # Convert to numpy for matplotlib
-        resultNp = np.array(resultImage)
-        
-        # Display the image
-        plt.figure(figsize=(12, 8))
-        plt.imshow(resultNp)
-        
-        # Add corner markers for front window
-        if frontWindowIdx is not None and corners:
-            # Plot corner markers
-            cornerX = [c[0] for c in corners]
-            cornerY = [c[1] for c in corners]
-            plt.scatter(cornerX, cornerY, c='yellow', s=30, marker='o', edgecolors='black', linewidths=1, zorder=5)
-            
-            # Plot extrapolated curves if available
-            if extrapolatedCurves is not None:
-                imgWidth, imgHeight = image.size
-                xValues = np.arange(0, imgWidth)
-                
-                # Plot first curve (before first corner)
-                y1 = evalPolynomial(extrapolatedCurves[0], xValues)
-                # Clip to image bounds
-                mask1 = (y1 >= 0) & (y1 < imgHeight)
-                plt.plot(xValues[mask1], y1[mask1], 'c-', linewidth=2, label='Curve 1 (before)', zorder=6)
-                
-                # Plot second curve (after last corner)
-                y2 = evalPolynomial(extrapolatedCurves[1], xValues)
-                # Clip to image bounds
-                mask2 = (y2 >= 0) & (y2 < imgHeight)
-                plt.plot(xValues[mask2], y2[mask2], 'm-', linewidth=2, label='Curve 2 (after)', zorder=6)
-                
-                # Plot intersection point if found
-                if intersectionPt is not None:
-                    plt.scatter([intersectionPt[0]], [intersectionPt[1]], 
-                               c='white', s=100, marker='*', edgecolors='black', 
-                               linewidths=2, zorder=7, label='Intersection')
-                
-                plt.legend(loc='upper right')
-        
-        plt.title(f"{file} - Front window: green, Others: red, Corners: yellow")
-        plt.axis('off')
-        plt.xlim(0, image.size[0])
-        plt.ylim(image.size[1], 0)  # Inverted y-axis for image coordinates
-        plt.show()
+        displayMask(baseName)
 
 
 if __name__ == "__main__":
     processAndSaveMasks()
+    displayProcessedMasks()
