@@ -25,7 +25,8 @@ from config import (
     PROCESSED_MASK_FOLDER,
     POLYGON_FOLDER,
     DXF_FOLDER,
-    SCALED_DXF_FOLDER
+    SCALED_DXF_FOLDER,
+    GENERATED_IMAGES_FOLDER
 )
 
 # Maximum number of files allowed for DXF scaling (API limit)
@@ -183,6 +184,7 @@ class WindowShapesGUI:
         self.browse_type = tk.StringVar(value="image")
         types = [
             ("Images (CleanedImages)", "image", ORIGINAL_IMAGE_FOLDER),
+            ("Generated Images", "generated", GENERATED_IMAGES_FOLDER),
             ("Aligned Images", "aligned", HORIZONTAL_ALIGN_IMAGES),
             ("Masks (overlay)", "mask", PROCESSED_MASK_FOLDER),
             ("Polygons (overlay)", "polygon", POLYGON_FOLDER),

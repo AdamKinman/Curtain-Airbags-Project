@@ -20,4 +20,6 @@ ROTATED_LABELS_FOLDER = os.path.join(HORIZONTAL_ALIGN_DIR, "RotatedLabels")
 DXF_FOLDER = os.path.join(BASE_DIR, "DXF")
 SCALED_DXF_FOLDER = os.path.join(BASE_DIR, "ScaledDXF")
 
+GENERATED_IMAGES_FOLDER = os.path.join(BASE_DIR, "GeneratedImages")
+
 POLYGON_CORNERS = 10
