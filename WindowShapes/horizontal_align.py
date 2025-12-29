@@ -1,6 +1,7 @@
 from PIL import Image
 import os
 import math
+from image_files import find_image_path, list_image_files, split_base_and_ext
 
 '''
 This scripts rotates all images so that the bottoms of the tires are aligned horizontally.
@@ -85,7 +86,8 @@ def rotateLabel(labelDict, angle, imageSize):
     return "\n".join(output)
 
 def alignImage(name, imageFolder, labelFolder, tireLabelKey):
-    imagePath = os.path.join(imageFolder, f"{name}.jpg")
+    # Support .jpg/.jpeg/.png input images
+    imagePath = find_image_path(imageFolder, name)
     labelPath = os.path.join(labelFolder, f"{name}.txt")
     if not os.path.exists(imagePath) or not os.path.exists(labelPath):
         print(f"Missing image or label for {name}")
@@ -102,21 +104,21 @@ def alignImage(name, imageFolder, labelFolder, tireLabelKey):
     if not os.path.exists(OUTPUT_LABEL_FOLDER):
         os.makedirs(OUTPUT_LABEL_FOLDER)
     rotatedImage = rotateImage(image, angle)
-    rotatedImage.save(os.path.join(OUTPUT_IMAGE_FOLDER, f"{name}.jpg"))
+    # Preserve original extension when saving aligned image
+    _, ext = os.path.splitext(imagePath)
+    rotatedImage.save(os.path.join(OUTPUT_IMAGE_FOLDER, f"{name}{ext.lower()}"))
     rotatedLabelContent = rotateLabel(labelDict, angle, image.size)
     with open(os.path.join(OUTPUT_LABEL_FOLDER, f"{name}.txt"), 'w') as file:
         file.write(rotatedLabelContent)
 
 
 def run():
-    files = os.listdir(IMAGE_FOLDER)
-    for file in files:
-        if file.endswith('.jpg'):
-            name = os.path.splitext(file)[0]
-            try:
-                alignImage(name, IMAGE_FOLDER, LABEL_FOLDER, TIRE_LABEL_KEY)
-            except AssertionError as e:
-                print(f"Skipping {name} due to error: {e}")
+    for file in list_image_files(IMAGE_FOLDER):
+        name, _ = split_base_and_ext(file)
+        try:
+            alignImage(name, IMAGE_FOLDER, LABEL_FOLDER, TIRE_LABEL_KEY)
+        except AssertionError as e:
+            print(f"Skipping {name} due to error: {e}")
 
 if __name__ == '__main__':
     run()

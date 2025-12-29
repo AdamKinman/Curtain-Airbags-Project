@@ -6,6 +6,7 @@ import torch
 from PIL import Image
 from sam3.model_builder import build_sam3_image_model
 from sam3.model.sam3_image_processor import Sam3Processor
+from image_files import is_image_file
 
 
 def createMaskFromImage(imageFileName, processor, PROMPT):
@@ -19,7 +20,8 @@ def createMasks(processor, IMAGE_FOLDER, OUTPUT_FOLDER, PROMPT):
         os.makedirs(OUTPUT_FOLDER)
 
     for imageFileName in os.listdir(IMAGE_FOLDER):
-        if not imageFileName.lower().endswith('.jpg'): continue
+        if not is_image_file(imageFileName):
+            continue
         try:
             mask = createMaskFromImage(os.path.join(IMAGE_FOLDER, imageFileName), processor, PROMPT)
             maskFileName = os.path.join(OUTPUT_FOLDER, f"{imageFileName.split('.')[0]}.pt")

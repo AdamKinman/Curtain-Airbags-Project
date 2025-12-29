@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from random import shuffle
 
+from image_files import find_image_path, list_image_files
+
 from config import (
     HORIZONTAL_ALIGN_IMAGES as IMAGE_FOLDER,
     WINDOW_MASK_FOLDER,
@@ -709,11 +711,8 @@ def processAndSaveMasks():
     # Create output folder if it doesn't exist
     os.makedirs(PROCESSED_MASK_FOLDER, exist_ok=True)
     
-    files = os.listdir(IMAGE_FOLDER)
-    
+    files = list_image_files(IMAGE_FOLDER)
     for file in files:
-        if not file.lower().endswith('.jpg'):
-            continue
         
         baseName = file.split('.')[0]
         windowMaskPath = os.path.join(WINDOW_MASK_FOLDER, f"{baseName}.pt")
@@ -834,14 +833,14 @@ def displayMask(baseName):
     """
     windowMaskPath = os.path.join(WINDOW_MASK_FOLDER, f"{baseName}.pt")
     mirrorMaskPath = os.path.join(MIRROR_MASK_FOLDER, f"{baseName}.pt")
-    imagePath = os.path.join(IMAGE_FOLDER, f"{baseName}.jpg")
+    imagePath = find_image_path(IMAGE_FOLDER, baseName)
     
     if not os.path.exists(windowMaskPath):
         print(f"Window mask not found: {windowMaskPath}")
         return
     
-    if not os.path.exists(imagePath):
-        print(f"Image not found: {imagePath}")
+    if not imagePath or not os.path.exists(imagePath):
+        print(f"Image not found for base name: {baseName}")
         return
     
     # Load image
@@ -991,7 +990,7 @@ def displayMask(baseName):
             
             plt.legend(loc='upper right')
     
-    plt.title(f"{baseName}.jpg - Front window: green, Others: red, Corners: yellow")
+    plt.title(f"{baseName} - Front window: green, Others: red, Corners: yellow")
     plt.axis('off')
     plt.xlim(0, image.size[0])
     plt.ylim(image.size[1], 0)  # Inverted y-axis for image coordinates
@@ -1003,12 +1002,9 @@ def displayProcessedMasks():
     Display images with window masks overlaid.
     Iterates through all images and calls displayMask for each.
     """
-    files = os.listdir(IMAGE_FOLDER)
+    files = list_image_files(IMAGE_FOLDER)
     shuffle(files)
-    
     for file in files:
-        if not file.lower().endswith('.jpg'):
-            continue
         
         baseName = file.split('.')[0]
         displayMask(baseName)

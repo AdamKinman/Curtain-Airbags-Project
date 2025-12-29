@@ -15,6 +15,8 @@ import numpy as np
 import threading
 import queue
 
+from image_files import is_image_file, list_image_files, find_image_path
+
 from config import (
     ORIGINAL_IMAGE_FOLDER,
     ORIGINAL_LABELS_FOLDER,
@@ -304,7 +306,7 @@ class WindowShapesGUI:
             file = filedialog.askopenfilename(
                 initialdir=self.input_folder,
                 title="Select Image File",
-                filetypes=[("JPEG files", "*.jpg"), ("All files", "*.*")]
+                filetypes=[("Image files", "*.jpg *.jpeg *.png"), ("All files", "*.*")]
             )
             if file:
                 self.selected_files = [os.path.basename(file)]
@@ -315,7 +317,7 @@ class WindowShapesGUI:
             files = filedialog.askopenfilenames(
                 initialdir=self.input_folder,
                 title="Select Image Files",
-                filetypes=[("JPEG files", "*.jpg"), ("All files", "*.*")]
+                filetypes=[("Image files", "*.jpg *.jpeg *.png"), ("All files", "*.*")]
             )
             if files:
                 self.selected_files = [os.path.basename(f) for f in files]
@@ -329,7 +331,7 @@ class WindowShapesGUI:
             )
             if folder:
                 self.input_folder = folder
-                self.selected_files = [f for f in os.listdir(folder) if f.lower().endswith('.jpg')]
+                self.selected_files = [f for f in os.listdir(folder) if is_image_file(f)]
                 self.selected_files_var.set(f"Selected folder: {folder}\n({len(self.selected_files)} files)")
     
     def select_output_folder(self):
@@ -349,17 +351,15 @@ class WindowShapesGUI:
             self.file_listbox.insert(tk.END, "(Folder does not exist)")
             return
         
-        # Get appropriate file extension
+        # Get appropriate files for each type
         if browse_type in ['dxf', 'scaled_dxf']:
-            ext = '.dxf'
+            files = sorted([f for f in os.listdir(folder) if f.lower().endswith('.dxf')])
         elif browse_type in ['mask']:
-            ext = '.pt'
+            files = sorted([f for f in os.listdir(folder) if f.lower().endswith('.pt')])
         elif browse_type in ['polygon']:
-            ext = '.txt'
+            files = sorted([f for f in os.listdir(folder) if f.lower().endswith('.txt')])
         else:
-            ext = '.jpg'
-        
-        files = sorted([f for f in os.listdir(folder) if f.lower().endswith(ext)])
+            files = list_image_files(folder)
         
         if not files:
             self.file_listbox.insert(tk.END, "(No files found)")
@@ -391,9 +391,7 @@ class WindowShapesGUI:
         filepath = os.path.join(folder, filename)
         
         try:
-            if browse_type == "image":
-                self.display_image(filepath)
-            elif browse_type == "aligned":
+            if browse_type in {"image", "aligned", "generated"}:
                 self.display_image(filepath)
             elif browse_type == "mask":
                 self.display_mask_overlay(filename)
@@ -408,7 +406,8 @@ class WindowShapesGUI:
     
     def display_image(self, filepath):
         """Display a simple image."""
-        image = Image.open(filepath)
+        # Ensure modes like 'P' (palette PNG) display correctly in Tkinter.
+        image = Image.open(filepath).convert("RGBA")
         self.show_image_on_canvas(image)
     
     def display_mask_overlay(self, mask_filename):
@@ -417,9 +416,9 @@ class WindowShapesGUI:
         
         # Try to find corresponding image
         image_path = None
-        for img_folder in [HORIZONTAL_ALIGN_IMAGES, ORIGINAL_IMAGE_FOLDER]:
-            test_path = os.path.join(img_folder, f"{base_name}.jpg")
-            if os.path.exists(test_path):
+        for img_folder in [HORIZONTAL_ALIGN_IMAGES, GENERATED_IMAGES_FOLDER, ORIGINAL_IMAGE_FOLDER, self.input_folder]:
+            test_path = find_image_path(img_folder, base_name)
+            if test_path:
                 image_path = test_path
                 break
         
@@ -468,9 +467,9 @@ class WindowShapesGUI:
         
         # Try to find corresponding image
         image_path = None
-        for img_folder in [HORIZONTAL_ALIGN_IMAGES, ORIGINAL_IMAGE_FOLDER]:
-            test_path = os.path.join(img_folder, f"{base_name}.jpg")
-            if os.path.exists(test_path):
+        for img_folder in [HORIZONTAL_ALIGN_IMAGES, GENERATED_IMAGES_FOLDER, ORIGINAL_IMAGE_FOLDER, self.input_folder]:
+            test_path = find_image_path(img_folder, base_name)
+            if test_path:
                 image_path = test_path
                 break
         
@@ -960,7 +959,7 @@ class WindowShapesGUI:
                 return
         else:
             # Use full folder
-            files = [f for f in os.listdir(ORIGINAL_IMAGE_FOLDER) if f.lower().endswith('.jpg')]
+            files = list_image_files(ORIGINAL_IMAGE_FOLDER)
         
         # Check scale step limitations
         if self.pipeline_steps['scale'].get() and len(files) > MAX_SCALE_DXF_FILES:

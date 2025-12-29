@@ -12,6 +12,8 @@ import ezdxf
 from google import genai
 from google.genai import types
 
+from image_files import is_image_file
+
 from config import (
     ORIGINAL_IMAGE_FOLDER,
     DXF_FOLDER,
@@ -261,7 +263,7 @@ def run(imageFileNames=None):
         dxfFiles = set(os.path.splitext(f)[0] for f in os.listdir(DXF_FOLDER) if f.endswith('.dxf'))
         imageFileNames = [
             f for f in os.listdir(ORIGINAL_IMAGE_FOLDER)
-            if f.lower().endswith('.jpg') and os.path.splitext(f)[0] in dxfFiles
+            if is_image_file(f) and os.path.splitext(f)[0] in dxfFiles
         ]
     
     successCount = 0

@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw
 import os
 from random import shuffle
+from image_files import list_image_files
 
 from config import (
     HORIZONTAL_ALIGN_IMAGES as IMAGE_FOLDER,
@@ -68,11 +69,9 @@ def visualizePolygonsOnImage(imageName):
 
 
 if __name__ == '__main__':
-    files = os.listdir(IMAGE_FOLDER)
+    files = list_image_files(IMAGE_FOLDER)
     shuffle(files)
     for file in files:
-        if not file.lower().endswith('.jpg'):
-            continue
         polygon_path = os.path.join(POLYGON_FOLDER, f"{file.split('.')[0]}.txt")
         if os.path.exists(polygon_path):
             visualizePolygonsOnImage(file)
