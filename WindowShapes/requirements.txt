@@ -1,6 +1,28 @@
-torch
-pillow
+
+# Core dependencies (WindowShapes pipeline + SAM3 inference)
+torch==2.0.1
+torchvision==0.15.2
+
 numpy
-matplotlib
 opencv-python
+Pillow
+matplotlib
+scipy==1.11.2
+scikit-image
+
 ezdxf
+
+tqdm==4.66.1
+PyYAML==6.0.1
+einops==0.6.1
+typing_extensions==4.7.1
+psutil==5.9.5
+regex==2023.8.8
+requests==2.31.0
+
+# Image generation (Generate Images tab)
+diffusers
+
+# DXF scaling (Gemini API)
+google-genai
+google-auth==2.23.0

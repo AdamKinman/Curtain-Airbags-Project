@@ -7,6 +7,7 @@ DXF generation, and scaling.
 """
 
 import os
+import re
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk, ImageDraw
@@ -16,6 +17,10 @@ import threading
 import queue
 
 from image_files import is_image_file, list_image_files, find_image_path
+from generate_new_design import (
+    CarType, CarDescription, CarDesignGenerator,
+    generate_car_design, list_available_car_types, DEFAULT_DESCRIPTIONS
+)
 
 from config import (
     ORIGINAL_IMAGE_FOLDER,
@@ -62,6 +67,11 @@ class WindowShapesGUI:
         self.current_image = None
         self.current_image_tk = None
         
+        # Image generation state
+        self.generation_in_progress = False
+        self.generation_progress = tk.DoubleVar(value=0)
+        self.generation_status = tk.StringVar(value="")
+        
         # Setup UI
         self.setup_ui()
         
@@ -101,10 +111,10 @@ class WindowShapesGUI:
         self.notebook.add(self.browse_tab, text="Browse Files")
         self.setup_browse_tab()
         
-        # Tab 3: Pipeline
-        self.pipeline_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.pipeline_tab, text="Full Pipeline")
-        self.setup_pipeline_tab()
+        # Tab 3: Generate Images
+        self.generate_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.generate_tab, text="Generate Images")
+        self.setup_generate_tab()
         
         # Log output at bottom
         log_frame = ttk.LabelFrame(self.left_frame, text="Log Output")
@@ -143,23 +153,44 @@ class WindowShapesGUI:
         self.selected_files = []
         self.input_folder = ORIGINAL_IMAGE_FOLDER
         
-        # Operations frame
-        ops_frame = ttk.LabelFrame(self.processing_tab, text="Operations")
-        ops_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Pipeline Steps frame (with checkboxes)
+        steps_frame = ttk.LabelFrame(self.processing_tab, text="Pipeline Steps")
+        steps_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        # Create operation buttons
-        operations = [
-            ("1. Horizontal Align", self.run_horizontal_align),
-            ("2. Create Masks (SAM3)", self.run_create_masks),
-            ("3. Process Masks", self.run_process_masks),
-            ("4. Create Polygons", self.run_create_polygons),
-            ("5. Create DXF Files", self.run_create_dxf),
-            ("6. Scale DXF Files", self.run_scale_dxf),
+        self.pipeline_steps = {
+            'align': tk.BooleanVar(value=True),
+            'masks': tk.BooleanVar(value=True),
+            'process_masks': tk.BooleanVar(value=True),
+            'polygons': tk.BooleanVar(value=True),
+            'dxf': tk.BooleanVar(value=True),
+            'scale': tk.BooleanVar(value=False),  # Off by default due to API limits
+        }
+        
+        step_labels = [
+            ('align', '1. Horizontal Align'),
+            ('masks', '2. Create Masks (SAM3)'),
+            ('process_masks', '3. Process Masks (extrapolation)'),
+            ('polygons', '4. Create Polygons from Masks'),
+            ('dxf', '5. Create DXF Files from Polygons'),
+            ('scale', '6. Scale DXF Files (API limited - max 14 files)'),
         ]
         
-        for text, command in operations:
-            btn = ttk.Button(ops_frame, text=text, command=command)
-            btn.pack(fill=tk.X, padx=5, pady=2)
+        for key, label in step_labels:
+            ttk.Checkbutton(steps_frame, text=label, 
+                           variable=self.pipeline_steps[key]).pack(anchor=tk.W)
+        
+        # Warning label for scale step
+        self.scale_warning_label = ttk.Label(
+            steps_frame, 
+            text="⚠️ Scale DXF step has API limits (max 14 files). "
+                 "Disable it for large batches.",
+            foreground="orange"
+        )
+        self.scale_warning_label.pack(anchor=tk.W, pady=(5, 0))
+        
+        # Run Pipeline button
+        ttk.Button(steps_frame, text="Run Pipeline", 
+                  command=self.run_pipeline).pack(fill=tk.X, padx=5, pady=10)
         
         # Output folder selection
         output_frame = ttk.LabelFrame(self.processing_tab, text="Output Folders (optional)")
@@ -222,59 +253,331 @@ class WindowShapesGUI:
         # Initial file list
         self.refresh_file_list()
     
-    def setup_pipeline_tab(self):
-        """Setup the full pipeline tab."""
-        # Step selection
-        steps_frame = ttk.LabelFrame(self.pipeline_tab, text="Pipeline Steps")
-        steps_frame.pack(fill=tk.X, padx=5, pady=5)
+    def setup_generate_tab(self):
+        """Setup the image generation tab."""
+        # Create a scrollable frame for the generate tab
+        canvas = tk.Canvas(self.generate_tab)
+        scrollbar = ttk.Scrollbar(self.generate_tab, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
         
-        self.pipeline_steps = {
-            'align': tk.BooleanVar(value=True),
-            'masks': tk.BooleanVar(value=True),
-            'process_masks': tk.BooleanVar(value=True),
-            'polygons': tk.BooleanVar(value=True),
-            'dxf': tk.BooleanVar(value=True),
-            'scale': tk.BooleanVar(value=False),  # Off by default due to API limits
-        }
-        
-        step_labels = [
-            ('align', '1. Horizontal Align'),
-            ('masks', '2. Create Masks (SAM3)'),
-            ('process_masks', '3. Process Masks (extrapolation)'),
-            ('polygons', '4. Create Polygons from Masks'),
-            ('dxf', '5. Create DXF Files from Polygons'),
-            ('scale', '6. Scale DXF Files (API limited - max 14 files)'),
-        ]
-        
-        for key, label in step_labels:
-            ttk.Checkbutton(steps_frame, text=label, 
-                           variable=self.pipeline_steps[key]).pack(anchor=tk.W)
-        
-        # File selection for pipeline
-        pipeline_files_frame = ttk.LabelFrame(self.pipeline_tab, text="File Selection")
-        pipeline_files_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        self.pipeline_mode = tk.StringVar(value="folder")
-        ttk.Radiobutton(pipeline_files_frame, text="Process All (Full Folder)", 
-                       variable=self.pipeline_mode, value="folder").pack(anchor=tk.W)
-        ttk.Radiobutton(pipeline_files_frame, text="Use Selection from Processing Tab", 
-                       variable=self.pipeline_mode, value="selection").pack(anchor=tk.W)
-        
-        # Warning label for scale step
-        warning_frame = ttk.Frame(self.pipeline_tab)
-        warning_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        self.scale_warning_label = ttk.Label(
-            warning_frame, 
-            text="⚠️ Scale DXF step has API limits (max 14 files). "
-                 "Disable it for large batches.",
-            foreground="orange"
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        self.scale_warning_label.pack(anchor=tk.W)
         
-        # Run pipeline button
-        ttk.Button(self.pipeline_tab, text="Run Pipeline", 
-                  command=self.run_pipeline, style='Accent.TButton').pack(pady=10)
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Input mode selection
+        mode_frame = ttk.LabelFrame(scrollable_frame, text="Input Mode")
+        mode_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.gen_input_mode = tk.StringVar(value="default")
+        ttk.Radiobutton(mode_frame, text="Use Default Car Type", 
+                       variable=self.gen_input_mode, value="default",
+                       command=self.on_gen_mode_change).pack(anchor=tk.W)
+        ttk.Radiobutton(mode_frame, text="Custom Parameters", 
+                       variable=self.gen_input_mode, value="custom",
+                       command=self.on_gen_mode_change).pack(anchor=tk.W)
+        
+        # Default car type selection
+        self.default_type_frame = ttk.LabelFrame(scrollable_frame, text="Select Car Type")
+        self.default_type_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.selected_car_type = tk.StringVar(value=CarType.SEDAN.value)
+        car_types = list_available_car_types()
+        self.car_type_combo = ttk.Combobox(self.default_type_frame, 
+                                           textvariable=self.selected_car_type,
+                                           values=car_types, state="readonly")
+        self.car_type_combo.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Show default description
+        self.default_desc_label = ttk.Label(self.default_type_frame, text="", wraplength=350)
+        self.default_desc_label.pack(anchor=tk.W, padx=5, pady=2)
+        self.car_type_combo.bind("<<ComboboxSelected>>", self.on_car_type_selected)
+        self.on_car_type_selected(None)  # Initialize
+        
+        # Custom parameters frame
+        self.custom_params_frame = ttk.LabelFrame(scrollable_frame, text="Custom Parameters")
+        self.custom_params_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Car type (custom)
+        ttk.Label(self.custom_params_frame, text="Car Type:").pack(anchor=tk.W, padx=5)
+        self.custom_car_type = tk.StringVar(value="sedan")
+        ttk.Entry(self.custom_params_frame, textvariable=self.custom_car_type).pack(fill=tk.X, padx=5, pady=2)
+        
+        # Color
+        ttk.Label(self.custom_params_frame, text="Color:").pack(anchor=tk.W, padx=5)
+        self.custom_color = tk.StringVar(value="")
+        ttk.Entry(self.custom_params_frame, textvariable=self.custom_color).pack(fill=tk.X, padx=5, pady=2)
+        
+        # Brand style
+        ttk.Label(self.custom_params_frame, text="Brand Style:").pack(anchor=tk.W, padx=5)
+        self.custom_brand_style = tk.StringVar(value="")
+        ttk.Entry(self.custom_params_frame, textvariable=self.custom_brand_style).pack(fill=tk.X, padx=5, pady=2)
+        
+        # Era
+        ttk.Label(self.custom_params_frame, text="Era:").pack(anchor=tk.W, padx=5)
+        self.custom_era = tk.StringVar(value="modern")
+        era_combo = ttk.Combobox(self.custom_params_frame, textvariable=self.custom_era,
+                                  values=["modern", "vintage", "futuristic", "retro"])
+        era_combo.pack(fill=tk.X, padx=5, pady=2)
+        
+        # Features (comma-separated)
+        ttk.Label(self.custom_params_frame, text="Features (comma-separated):").pack(anchor=tk.W, padx=5)
+        self.custom_features = tk.StringVar(value="")
+        ttk.Entry(self.custom_params_frame, textvariable=self.custom_features).pack(fill=tk.X, padx=5, pady=2)
+        
+        # Custom details
+        ttk.Label(self.custom_params_frame, text="Custom Details:").pack(anchor=tk.W, padx=5)
+        self.custom_details = tk.StringVar(value="")
+        ttk.Entry(self.custom_params_frame, textvariable=self.custom_details).pack(fill=tk.X, padx=5, pady=2)
+        
+        # Initially hide custom params
+        self.custom_params_frame.pack_forget()
+        
+        # Generation options
+        options_frame = ttk.LabelFrame(scrollable_frame, text="Generation Options")
+        options_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Number of images
+        count_frame = ttk.Frame(options_frame)
+        count_frame.pack(fill=tk.X, padx=5, pady=2)
+        ttk.Label(count_frame, text="Number of Images:").pack(side=tk.LEFT)
+        self.gen_count = tk.IntVar(value=1)
+        ttk.Spinbox(count_frame, from_=1, to=20, textvariable=self.gen_count, width=5).pack(side=tk.LEFT, padx=5)
+        
+        # Seed (optional)
+        seed_frame = ttk.Frame(options_frame)
+        seed_frame.pack(fill=tk.X, padx=5, pady=2)
+        self.use_seed = tk.BooleanVar(value=False)
+        ttk.Checkbutton(seed_frame, text="Use Seed:", variable=self.use_seed).pack(side=tk.LEFT)
+        self.gen_seed = tk.IntVar(value=42)
+        self.seed_entry = ttk.Spinbox(seed_frame, from_=0, to=999999999, textvariable=self.gen_seed, width=12)
+        self.seed_entry.pack(side=tk.LEFT, padx=5)
+        
+        # Filename prefix
+        prefix_frame = ttk.Frame(options_frame)
+        prefix_frame.pack(fill=tk.X, padx=5, pady=2)
+        ttk.Label(prefix_frame, text="Filename Prefix:").pack(side=tk.LEFT)
+        self.gen_filename_prefix = tk.StringVar(value="car_design")
+        ttk.Entry(prefix_frame, textvariable=self.gen_filename_prefix, width=20).pack(side=tk.LEFT, padx=5)
+        
+        # Warning label
+        warning_frame = ttk.Frame(scrollable_frame)
+        warning_frame.pack(fill=tk.X, padx=5, pady=5)
+        warning_label = ttk.Label(
+            warning_frame,
+            text="⚠️ Image generation may take several minutes per image.\n"
+                 "The UI will remain responsive during generation.",
+            foreground="orange",
+            wraplength=350
+        )
+        warning_label.pack(anchor=tk.W)
+        
+        # Progress frame
+        progress_frame = ttk.LabelFrame(scrollable_frame, text="Generation Progress")
+        progress_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.gen_progress_bar = ttk.Progressbar(
+            progress_frame, 
+            variable=self.generation_progress,
+            maximum=100,
+            mode='determinate'
+        )
+        self.gen_progress_bar.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.gen_status_label = ttk.Label(progress_frame, textvariable=self.generation_status)
+        self.gen_status_label.pack(anchor=tk.W, padx=5, pady=2)
+        
+        # Generate button
+        self.generate_btn = ttk.Button(scrollable_frame, text="Generate Images", 
+                                        command=self.start_image_generation)
+        self.generate_btn.pack(pady=10)
+        
+        # Cancel button (hidden initially)
+        self.cancel_gen_btn = ttk.Button(scrollable_frame, text="Cancel Generation",
+                                          command=self.cancel_generation, state=tk.DISABLED)
+        self.cancel_gen_btn.pack(pady=5)
+        
+        # Flag for cancellation
+        self.cancel_generation_flag = False
+    
+    def on_gen_mode_change(self):
+        """Handle generation input mode change."""
+        mode = self.gen_input_mode.get()
+        if mode == "default":
+            self.default_type_frame.pack(fill=tk.X, padx=5, pady=5, after=self.default_type_frame.master.winfo_children()[0])
+            self.custom_params_frame.pack_forget()
+        else:
+            self.default_type_frame.pack_forget()
+            self.custom_params_frame.pack(fill=tk.X, padx=5, pady=5, after=self.custom_params_frame.master.winfo_children()[0])
+    
+    def on_car_type_selected(self, event):
+        """Update description when car type is selected."""
+        selected = self.selected_car_type.get()
+        # Find the CarType enum
+        for ct in CarType:
+            if ct.value == selected:
+                desc = DEFAULT_DESCRIPTIONS.get(ct)
+                if desc:
+                    info = f"Default: {desc.color} {desc.car_type}, {desc.era} era"
+                    self.default_desc_label.config(text=info)
+                break
+    
+    def start_image_generation(self):
+        """Start the image generation process."""
+        if self.generation_in_progress:
+            messagebox.showwarning("Warning", "Image generation is already in progress.")
+            return
+        
+        # Show warning
+        count = self.gen_count.get()
+        result = messagebox.askyesno(
+            "Confirm Generation",
+            f"You are about to generate {count} image(s).\n\n"
+            "⚠️ This process may take several minutes per image.\n"
+            "The model will be loaded into memory (requires significant RAM/VRAM).\n\n"
+            "Do you want to continue?"
+        )
+        if not result:
+            return
+        
+        self.generation_in_progress = True
+        self.cancel_generation_flag = False
+        self.generation_progress.set(0)
+        self.generation_status.set("Initializing...")
+        self.generate_btn.config(state=tk.DISABLED)
+        self.cancel_gen_btn.config(state=tk.NORMAL)
+        
+        # Start generation in thread
+        self.run_in_thread(self._generate_images)
+    
+    def cancel_generation(self):
+        """Cancel the ongoing generation."""
+        self.cancel_generation_flag = True
+        self.generation_status.set("Cancelling...")
+        self.log("Generation cancellation requested...")
+    
+    def _generate_images(self):
+        """Thread worker for image generation."""
+        try:
+            count = self.gen_count.get()
+            mode = self.gen_input_mode.get()
+            prefix = self.gen_filename_prefix.get() or "car_design"
+            seed = self.gen_seed.get() if self.use_seed.get() else None
+
+            # Pick the next available filename index so we never overwrite.
+            os.makedirs(GENERATED_IMAGES_FOLDER, exist_ok=True)
+            pattern = re.compile(rf"^{re.escape(prefix)}_(\\d+)\\.png$", re.IGNORECASE)
+            existing_indices = []
+            for name in os.listdir(GENERATED_IMAGES_FOLDER):
+                match = pattern.match(name)
+                if match:
+                    try:
+                        existing_indices.append(int(match.group(1)))
+                    except ValueError:
+                        pass
+            start_index = (max(existing_indices) + 1) if existing_indices else 1
+            
+            self.log("Initializing image generator...")
+            self.root.after(0, lambda: self.generation_status.set("Loading model..."))
+            
+            generator = CarDesignGenerator()
+            generator.load_model()
+            
+            self.log("Model loaded. Starting image generation...")
+            
+            generated_images = []
+            
+            for i in range(count):
+                if self.cancel_generation_flag:
+                    self.log("Generation cancelled by user.")
+                    break
+                
+                progress = ((i) / count) * 100
+                self.root.after(0, lambda p=progress: self.generation_progress.set(p))
+                self.root.after(0, lambda idx=i+1, total=count: 
+                               self.generation_status.set(f"Generating image {idx}/{total}..."))
+                self.log(f"Generating image {i+1}/{count}...")
+
+                filename = f"{prefix}_{start_index + i:04d}.png"
+                
+                if mode == "default":
+                    # Use default car type
+                    selected = self.selected_car_type.get()
+                    car_type_enum = None
+                    for ct in CarType:
+                        if ct.value == selected:
+                            car_type_enum = ct
+                            break
+                    
+                    image = generator.generate(
+                        car_type=car_type_enum,
+                        output_path=GENERATED_IMAGES_FOLDER,
+                        filename=filename,
+                        seed=seed + i if seed else None,
+                    )
+                else:
+                    # Use custom parameters
+                    features = [f.strip() for f in self.custom_features.get().split(",") if f.strip()]
+                    
+                    description = CarDescription(
+                        car_type=self.custom_car_type.get() or "sedan",
+                        color=self.custom_color.get() or None,
+                        brand_style=self.custom_brand_style.get() or None,
+                        era=self.custom_era.get() or "modern",
+                        features=features,
+                        custom_details=self.custom_details.get() or None,
+                    )
+                    
+                    image = generator.generate(
+                        description=description,
+                        output_path=GENERATED_IMAGES_FOLDER,
+                        filename=filename,
+                        seed=seed + i if seed else None,
+                    )
+                
+                generated_images.append(image)
+                self.log(f"Image {i+1}/{count} generated successfully.")
+            
+            # Complete
+            final_progress = 100 if not self.cancel_generation_flag else ((len(generated_images)) / count) * 100
+            self.root.after(0, lambda: self.generation_progress.set(final_progress))
+            
+            if self.cancel_generation_flag:
+                self.root.after(0, lambda: self.generation_status.set(
+                    f"Cancelled. Generated {len(generated_images)}/{count} images."))
+                self.log(f"Generation cancelled. {len(generated_images)} images were created.")
+            else:
+                self.root.after(0, lambda: self.generation_status.set(
+                    f"Complete! Generated {count} images."))
+                self.log(f"Image generation complete. {count} images saved to {GENERATED_IMAGES_FOLDER}")
+            
+            # Display the last generated image if any
+            if generated_images:
+                self.root.after(0, lambda img=generated_images[-1]: self._display_generated_image(img))
+            
+            # Refresh file list if on browse tab with generated images
+            self.root.after(0, self.refresh_file_list)
+            
+        except Exception as e:
+            self.log(f"Error during image generation: {e}")
+            self.root.after(0, lambda: self.generation_status.set(f"Error: {str(e)[:50]}..."))
+            self.root.after(0, lambda: messagebox.showerror("Generation Error", str(e)))
+        finally:
+            self.generation_in_progress = False
+            self.root.after(0, lambda: self.generate_btn.config(state=tk.NORMAL))
+            self.root.after(0, lambda: self.cancel_gen_btn.config(state=tk.DISABLED))
+    
+    def _display_generated_image(self, image):
+        """Display a generated PIL image on the canvas."""
+        if image:
+            self.show_image_on_canvas(image.convert("RGBA"))
+            self.info_label.config(text="Displaying: Latest generated image")
     
     def setup_right_panel(self):
         """Setup the right image display panel."""
@@ -950,16 +1253,9 @@ class WindowShapesGUI:
     
     def run_pipeline(self):
         """Run the full pipeline with selected steps."""
-        mode = self.pipeline_mode.get()
-        
-        if mode == "selection":
-            files = self.selected_files
-            if not files:
-                messagebox.showwarning("Warning", "No files selected in Processing tab.")
-                return
-        else:
-            # Use full folder
-            files = list_image_files(ORIGINAL_IMAGE_FOLDER)
+        files = self.get_selected_files_for_operation()
+        if files is None:
+            return
         
         # Check scale step limitations
         if self.pipeline_steps['scale'].get() and len(files) > MAX_SCALE_DXF_FILES:
