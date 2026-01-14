@@ -1,15 +1,18 @@
-from PIL import Image
-import os
+"""Horizontally align car images using tire labels.
+
+This script rotates each image so that the bottoms of the labeled tires are aligned.
+Images are skipped if the tire labels are missing/invalid.
+"""
+
 import math
+import os
+
+from PIL import Image
+
 from image_files import find_image_path, list_image_files, split_base_and_ext
 
-'''
-This scripts rotates all images so that the bottoms of the tires are aligned horizontally.
-Images will be skipped if the tires are already perfectly aligned or if there is an issue
-with the associated label file, usually that more than two tires are labeled.
-'''
 
-TIRE_LABEL_KEY = 0 # The key for tire locations in the label files
+TIRE_LABEL_KEY = 0  # The key for tire locations in the label files
 
 from config import (
     ORIGINAL_IMAGE_FOLDER as IMAGE_FOLDER,
@@ -18,18 +21,11 @@ from config import (
     ROTATED_LABELS_FOLDER as OUTPUT_LABEL_FOLDER
 )
 
-'''
-Output labels format:
-Angle (degrees)
-key x1 y1 x2 y2 x3 y3 x4 y4 (key is the same as in the original label, 
-the rest are the four corners of the rotated bounding box)
-'''
-
-def labelTextToDict(labelText):
+def label_text_to_dict(label_text: str) -> dict[int, list[tuple[float, float, float, float]]]:
     output = {}
-    lines = labelText.strip().split('\n')
+    lines = label_text.strip().split("\n")
     for line in lines:
-        parts = line.split(' ')
+        parts = line.split(" ")
         assert len(parts) == 5, f"Invalid label format: {line}"
         k = int(parts[0])
         rect = (float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4]))
@@ -37,30 +33,30 @@ def labelTextToDict(labelText):
         output.setdefault(k, []).append(rect)
     return output
 
-def getRotationAngle(labelDict, tireLabelKey):
-    assert tireLabelKey in labelDict, f"Tire label key {tireLabelKey} not found in label dictionary"
-    assert len(labelDict[tireLabelKey]) == 2, f"Expected 2 tires, found {len(labelDict[tireLabelKey])}"
-    tires = labelDict[tireLabelKey]
+def get_rotation_angle(label_dict, tire_label_key: int) -> float:
+    assert tire_label_key in label_dict, f"Tire label key {tire_label_key} not found in label dictionary"
+    assert len(label_dict[tire_label_key]) == 2, f"Expected 2 tires, found {len(label_dict[tire_label_key])}"
+
+    tires = label_dict[tire_label_key]
     tires.sort(key=lambda rect: rect[0])  # Sort by x-coordinate
-    leftTireX = tires[0][0]
-    rightTireX = tires[1][0]
-    leftTireBottomY = tires[0][1] + tires[0][3]/2
-    rightTireBottomY = tires[1][1] + tires[1][3]/2
-    angle = math.atan2((rightTireBottomY - leftTireBottomY), (rightTireX - leftTireX))
+    left_tire_x = tires[0][0]
+    right_tire_x = tires[1][0]
+    left_tire_bottom_y = tires[0][1] + tires[0][3] / 2
+    right_tire_bottom_y = tires[1][1] + tires[1][3] / 2
+    angle = math.atan2((right_tire_bottom_y - left_tire_bottom_y), (right_tire_x - left_tire_x))
     # math.atan2(y,x) returns arctan(y/x)
     return angle / math.pi * 180
 
-def rotateImage(image, angle):
-    rotatedImage = image.rotate(angle)
-    return rotatedImage
+def rotate_image(image: Image.Image, angle_degrees: float) -> Image.Image:
+    return image.rotate(angle_degrees)
 
-def rotateLabel(labelDict, angle, imageSize):
-    output = [str(angle)]
-    angleRad = math.radians(angle)
-    cos = math.cos(angleRad)
-    sin = math.sin(angleRad)
+def rotate_label(label_dict, angle_degrees: float) -> str:
+    output = [str(angle_degrees)]
+    angle_rad = math.radians(angle_degrees)
+    cos = math.cos(angle_rad)
+    sin = math.sin(angle_rad)
 
-    for key, rects in labelDict.items():
+    for key, rects in label_dict.items():
         for rect in rects:
             cx, cy, w, h = rect
             corners = [
@@ -85,40 +81,49 @@ def rotateLabel(labelDict, angle, imageSize):
             
     return "\n".join(output)
 
-def alignImage(name, imageFolder, labelFolder, tireLabelKey):
+def align_image(name: str, image_folder: str, label_folder: str, tire_label_key: int) -> None:
     # Support .jpg/.jpeg/.png input images
-    imagePath = find_image_path(imageFolder, name)
-    labelPath = os.path.join(labelFolder, f"{name}.txt")
-    if not os.path.exists(imagePath) or not os.path.exists(labelPath):
+    image_path = find_image_path(image_folder, name)
+    label_path = os.path.join(label_folder, f"{name}.txt")
+    if not image_path or not os.path.exists(image_path) or not os.path.exists(label_path):
         print(f"Missing image or label for {name}")
         return
 
-    image = Image.open(imagePath)
-    with open(labelPath, 'r') as file:
-        labelText = file.read()
-    labelDict = labelTextToDict(labelText)
+    image = Image.open(image_path)
+    with open(label_path, "r", encoding="utf-8") as file:
+        label_text = file.read()
 
-    angle = getRotationAngle(labelDict, tireLabelKey)
+    label_dict = label_text_to_dict(label_text)
+
+    angle = get_rotation_angle(label_dict, tire_label_key)
     if not os.path.exists(OUTPUT_IMAGE_FOLDER):
         os.makedirs(OUTPUT_IMAGE_FOLDER)
     if not os.path.exists(OUTPUT_LABEL_FOLDER):
         os.makedirs(OUTPUT_LABEL_FOLDER)
-    rotatedImage = rotateImage(image, angle)
+    rotated_image = rotate_image(image, angle)
     # Preserve original extension when saving aligned image
-    _, ext = os.path.splitext(imagePath)
-    rotatedImage.save(os.path.join(OUTPUT_IMAGE_FOLDER, f"{name}{ext.lower()}"))
-    rotatedLabelContent = rotateLabel(labelDict, angle, image.size)
-    with open(os.path.join(OUTPUT_LABEL_FOLDER, f"{name}.txt"), 'w') as file:
-        file.write(rotatedLabelContent)
+    _, ext = os.path.splitext(image_path)
+    rotated_image.save(os.path.join(OUTPUT_IMAGE_FOLDER, f"{name}{ext.lower()}"))
+    rotated_label_content = rotate_label(label_dict, angle)
+    with open(os.path.join(OUTPUT_LABEL_FOLDER, f"{name}.txt"), "w", encoding="utf-8") as file:
+        file.write(rotated_label_content)
+
+
+# Backwards-compatible aliases (deprecated)
+labelTextToDict = label_text_to_dict
+getRotationAngle = get_rotation_angle
+rotateImage = rotate_image
+rotateLabel = rotate_label
+alignImage = align_image
 
 
 def run():
     for file in list_image_files(IMAGE_FOLDER):
         name, _ = split_base_and_ext(file)
         try:
-            alignImage(name, IMAGE_FOLDER, LABEL_FOLDER, TIRE_LABEL_KEY)
+            align_image(name, IMAGE_FOLDER, LABEL_FOLDER, TIRE_LABEL_KEY)
         except AssertionError as e:
             print(f"Skipping {name} due to error: {e}")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     run()

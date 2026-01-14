@@ -17,8 +17,8 @@ from config import (
 )
 DAYLIGHT_OPENINGS_LABEL_KEY = 4
 
-def rotatedLabelsToDict(rotatedLabelText):
-    lines = rotatedLabelText.strip().split('\n')
+def rotated_labels_to_dict(rotated_label_text):
+    lines = rotated_label_text.strip().split('\n')
     output = {}
     for line in lines[1:]:  # Skip the first line (angle)
         parts = line.split(' ')
@@ -30,17 +30,17 @@ def rotatedLabelsToDict(rotatedLabelText):
         output.setdefault(key, []).append(points)
     return output
 
-def squeezeMask(mask):
+def squeeze_mask(mask):
     """Squeeze a mask tensor to 2D, handling (1, H, W) or (H, W) formats."""
     if mask.ndim == 3 and mask.shape[0] == 1:
         return mask.squeeze(0)
     return mask
 
 # Returns minimum distance between two masks, or 0 if they overlap
-def distanceBetweenMasks(mask1, mask2):
+def distance_between_masks(mask1, mask2):
     # Ensure masks are 2D
-    mask1 = squeezeMask(mask1)
-    mask2 = squeezeMask(mask2)
+    mask1 = squeeze_mask(mask1)
+    mask2 = squeeze_mask(mask2)
     # Check if masks overlap
     overlap = torch.logical_and(mask1, mask2)
     if overlap.any():
@@ -53,12 +53,12 @@ def distanceBetweenMasks(mask1, mask2):
     minDistance = np.min(distTransform[mask1Indices])
     return float(minDistance)
 
-def getFrontWindowIndex(windowMasks, mirrorMask):
-    distances = [distanceBetweenMasks(windowMask, mirrorMask) for windowMask in windowMasks]
+def get_front_window_index(windowMasks, mirrorMask):
+    distances = [distance_between_masks(windowMask, mirrorMask) for windowMask in windowMasks]
     minDistance = min(distances)
     return distances.index(minDistance)
 
-def identifyCorners(mask, angleThreshold=150, minDistance=6, blockSize=5):
+def identify_corners(mask, angleThreshold=150, minDistance=6, blockSize=5):
     """
     Identify corners (sudden turns) in the outline of a mask shape.
     
@@ -73,7 +73,7 @@ def identifyCorners(mask, angleThreshold=150, minDistance=6, blockSize=5):
         List of (x, y) tuples representing corner positions
     """
     # Ensure mask is 2D
-    mask = squeezeMask(mask)
+    mask = squeeze_mask(mask)
     
     # Convert mask to numpy uint8 for OpenCV
     maskNp = mask.cpu().numpy().astype(np.uint8) * 255
@@ -148,7 +148,7 @@ def identifyCorners(mask, angleThreshold=150, minDistance=6, blockSize=5):
     return filteredCorners
 
 
-def fitQuadratic(points):
+def fit_quadratic(points):
     """Fit a quadratic polynomial y = a + bx + cx^2 using least squares."""
     x = points[:, 0].astype(float)
     y = points[:, 1].astype(float)
@@ -162,7 +162,7 @@ def fitQuadratic(points):
     return tuple(coeffs)  # (a, b, c)
 
 
-def fitCubic(points):
+def fit_cubic(points):
     """Fit a cubic polynomial y = a + bx + cx^2 + dx^3 using least squares."""
     x = points[:, 0].astype(float)
     y = points[:, 1].astype(float)
@@ -176,7 +176,7 @@ def fitCubic(points):
     return tuple(coeffs)  # (a, b, c, d)
 
 
-def extrapolateOutlineBehindMirror(windowMask, mirrorMask, corners, 
+def extrapolate_outline_behind_mirror(windowMask, mirrorMask, corners, 
                                    cornerDistanceThreshold=15, 
                                    excludeNearCorner=15,
                                    minPointsForFit=20,
@@ -201,8 +201,8 @@ def extrapolateOutlineBehindMirror(windowMask, mirrorMask, corners,
         return None
     
     # Ensure masks are 2D
-    windowMask = squeezeMask(windowMask)
-    mirrorMask = squeezeMask(mirrorMask)
+    windowMask = squeeze_mask(windowMask)
+    mirrorMask = squeeze_mask(mirrorMask)
     
     # Get the outline (contour) of the window
     maskNp = windowMask.cpu().numpy().astype(np.uint8) * 255
@@ -305,7 +305,7 @@ def extrapolateOutlineBehindMirror(windowMask, mirrorMask, corners,
     pointsAfterLast = np.array(pointsAfterLast)
     
     # Step 4: Fit polynomial functions using least squares
-    fitFunc = fitCubic if useCubic else fitQuadratic
+    fitFunc = fit_cubic if useCubic else fit_quadratic
     
     try:
         coeffsFirst = fitFunc(pointsBeforeFirst)
@@ -316,7 +316,7 @@ def extrapolateOutlineBehindMirror(windowMask, mirrorMask, corners,
     return (coeffsFirst, coeffsLast)
 
 
-def evalPolynomial(coeffs, x):
+def eval_polynomial(coeffs, x):
     """Evaluate a polynomial at x. Works for both quadratic and cubic."""
     if len(coeffs) == 3:  # Quadratic: a + bx + cx^2
         a, b, c = coeffs
@@ -326,7 +326,7 @@ def evalPolynomial(coeffs, x):
         return a + b * x + c * x**2 + d * x**3
 
 
-def isPointInRotatedRect(point, rectCorners, margin=50):
+def is_point_in_rotated_rect(point, rectCorners, margin=50):
     """
     Check if a point is inside a rotated rectangle defined by its 4 corners,
     with an optional margin around the rectangle.
@@ -380,7 +380,7 @@ def isPointInRotatedRect(point, rectCorners, margin=50):
     return True
 
 
-def getMirrorCentroid(mirrorMask):
+def get_mirror_centroid(mirrorMask):
     """
     Calculate the centroid (center of mass) of a mirror mask.
     
@@ -391,7 +391,7 @@ def getMirrorCentroid(mirrorMask):
         (x, y) tuple of the centroid, or None if mask is empty
     """
     if isinstance(mirrorMask, torch.Tensor):
-        mirrorMask = squeezeMask(mirrorMask)
+        mirrorMask = squeeze_mask(mirrorMask)
         mirrorNp = mirrorMask.cpu().numpy().astype(np.uint8) * 255
     else:
         mirrorNp = mirrorMask
@@ -409,7 +409,7 @@ def getMirrorCentroid(mirrorMask):
     return (centroidX, centroidY)
 
 
-def getIntersectionPoint(curve1, curve2, daylightOpeningsRect, mirrorMask, xRange=None, numSamples=1000, margin=30):
+def get_intersection_point(curve1, curve2, daylightOpeningsRect, mirrorMask, xRange=None, numSamples=1000, margin=30):
     """
     Find the intersection point of two polynomial curves within a daylight openings rectangle.
     Chooses the intersection point closest to the mirror centroid.
@@ -436,7 +436,7 @@ def getIntersectionPoint(curve1, curve2, daylightOpeningsRect, mirrorMask, xRang
         
         # Also include the mirror centroid area in the search range
         if mirrorMask is not None:
-            mirrorCentroid = getMirrorCentroid(mirrorMask)
+            mirrorCentroid = get_mirror_centroid(mirrorMask)
             if mirrorCentroid is not None:
                 centroidX, _ = mirrorCentroid
                 # Expand search range to include mirror area with some padding
@@ -447,8 +447,8 @@ def getIntersectionPoint(curve1, curve2, daylightOpeningsRect, mirrorMask, xRang
     
     # Find intersections by looking for sign changes in (curve1 - curve2)
     xValues = np.linspace(xMin, xMax, numSamples)
-    y1 = evalPolynomial(curve1, xValues)
-    y2 = evalPolynomial(curve2, xValues)
+    y1 = eval_polynomial(curve1, xValues)
+    y2 = eval_polynomial(curve2, xValues)
     diff = y1 - y2
     
     # Find sign changes (potential intersections)
@@ -467,7 +467,7 @@ def getIntersectionPoint(curve1, curve2, daylightOpeningsRect, mirrorMask, xRang
         else:
             xIntersect = (x1 + x2) / 2
         
-        yIntersect = evalPolynomial(curve1, xIntersect)
+        yIntersect = eval_polynomial(curve1, xIntersect)
         allIntersectionPoints.append((float(xIntersect), float(yIntersect)))
     
     if not allIntersectionPoints:
@@ -476,7 +476,7 @@ def getIntersectionPoint(curve1, curve2, daylightOpeningsRect, mirrorMask, xRang
     # Find the intersection closest to the mirror centroid
     closestPoint = None
     if mirrorMask is not None:
-        mirrorCentroid = getMirrorCentroid(mirrorMask)
+        mirrorCentroid = get_mirror_centroid(mirrorMask)
         
         if mirrorCentroid is not None:
             centroidX, centroidY = mirrorCentroid
@@ -499,13 +499,13 @@ def getIntersectionPoint(curve1, curve2, daylightOpeningsRect, mirrorMask, xRang
         return None
     
     # Now check if the closest intersection is inside the daylight openings rectangle
-    if not isPointInRotatedRect(closestPoint, daylightOpeningsRect, margin):
+    if not is_point_in_rotated_rect(closestPoint, daylightOpeningsRect, margin):
         return None
     
     return closestPoint
 
 
-def updateMask(frontMask, cornerNearMirror1, cornerNearMirror2, curve1, curve2, intersectionPoint, smoothingKernel=5):
+def update_mask(frontMask, cornerNearMirror1, cornerNearMirror2, curve1, curve2, intersectionPoint, smoothingKernel=5):
     """
     Update the front window mask by replacing the section between the two mirror-adjacent 
     corners with extrapolated curves meeting at an intersection point.
@@ -522,7 +522,7 @@ def updateMask(frontMask, cornerNearMirror1, cornerNearMirror2, curve1, curve2, 
     Returns:
         Updated 2D torch tensor mask
     """
-    frontMask = squeezeMask(frontMask)
+    frontMask = squeeze_mask(frontMask)
     maskNp = frontMask.cpu().numpy().astype(np.uint8) * 255
     
     # Find contours of the original mask
@@ -537,7 +537,7 @@ def updateMask(frontMask, cornerNearMirror1, cornerNearMirror2, curve1, curve2, 
     
     # If no intersection point, just return smoothed original mask
     if intersectionPoint is None:
-        smoothed = smoothMask(maskNp,smoothingKernel)
+        smoothed = smooth_mask(maskNp,smoothingKernel)
         return torch.from_numpy(smoothed > 0)
     
     # Find the indices of the two corners in the outline
@@ -586,7 +586,7 @@ def updateMask(frontMask, cornerNearMirror1, cornerNearMirror2, curve1, curve2, 
     if corner1X != intersectX:
         numNewPoints1 = max(int(abs(intersectX - corner1X)), 10)
         xValues1 = np.linspace(corner1X, intersectX, numNewPoints1)
-        yValues1 = evalPolynomial(curve1, xValues1)
+        yValues1 = eval_polynomial(curve1, xValues1)
         curvePoints1 = np.column_stack([xValues1, yValues1]).astype(int)
     else:
         curvePoints1 = np.array([[int(corner1X), int(corner1Y)], [int(intersectX), int(intersectY)]])
@@ -595,7 +595,7 @@ def updateMask(frontMask, cornerNearMirror1, cornerNearMirror2, curve1, curve2, 
     if intersectX != corner2X:
         numNewPoints2 = max(int(abs(corner2X - intersectX)), 10)
         xValues2 = np.linspace(intersectX, corner2X, numNewPoints2)
-        yValues2 = evalPolynomial(curve2, xValues2)
+        yValues2 = eval_polynomial(curve2, xValues2)
         curvePoints2 = np.column_stack([xValues2, yValues2]).astype(int)
     else:
         curvePoints2 = np.array([[int(intersectX), int(intersectY)], [int(corner2X), int(corner2Y)]])
@@ -631,12 +631,12 @@ def updateMask(frontMask, cornerNearMirror1, cornerNearMirror2, curve1, curve2, 
     newMaskNp = np.zeros_like(maskNp)
     cv2.fillPoly(newMaskNp, [newContour], 255)
     
-    smoothed = smoothMask(newMaskNp,smoothingKernel)
+    smoothed = smooth_mask(newMaskNp,smoothingKernel)
     
     return torch.from_numpy(smoothed > 0)
 
 
-def smoothMask(mask,smoothingKernel=5,iterations=7):
+def smooth_mask(mask,smoothingKernel=5,iterations=7):
     if iterations < 1: return mask
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (smoothingKernel, smoothingKernel))
     smoothed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
@@ -645,7 +645,7 @@ def smoothMask(mask,smoothingKernel=5,iterations=7):
     return smoothed
 
 
-def getCornersNearMirror(windowMask, mirrorMask, corners, cornerDistanceThreshold=15):
+def get_corners_near_mirror(windowMask, mirrorMask, corners, cornerDistanceThreshold=15):
     """
     Identify and return the first and last corners near the mirror.
     
@@ -661,8 +661,8 @@ def getCornersNearMirror(windowMask, mirrorMask, corners, cornerDistanceThreshol
     if mirrorMask is None or len(corners) < 2:
         return None
     
-    windowMask = squeezeMask(windowMask)
-    mirrorMask = squeezeMask(mirrorMask)
+    windowMask = squeeze_mask(windowMask)
+    mirrorMask = squeeze_mask(mirrorMask)
     
     # Get the outline (contour) of the window
     maskNp = windowMask.cpu().numpy().astype(np.uint8) * 255
@@ -703,7 +703,7 @@ def getCornersNearMirror(windowMask, mirrorMask, corners, cornerDistanceThreshol
     return (cornersNearMirror[0], cornersNearMirror[-1])
 
 
-def processAndSaveMasks():
+def process_and_save_masks():
     """
     Process all window masks by extrapolating behind the mirror and save them.
     Saves all window masks (with the front window updated) to PROCESSED_MASK_FOLDER.
@@ -727,29 +727,29 @@ def processAndSaveMasks():
         numMasks = windowMasksTensor.shape[0]
         
         # Convert to list of 2D masks for processing
-        windowMasks = [squeezeMask(windowMasksTensor[i]) for i in range(numMasks)]
+        windowMasks = [squeeze_mask(windowMasksTensor[i]) for i in range(numMasks)]
         
         # Load mirror mask to identify front window
         mirrorMask = None
         if os.path.exists(mirrorMaskPath):
             mirrorMasksTensor = torch.load(mirrorMaskPath)
             if mirrorMasksTensor.ndim >= 3 and mirrorMasksTensor.shape[0] > 0:
-                mirrorMask = squeezeMask(mirrorMasksTensor[0])
+                mirrorMask = squeeze_mask(mirrorMasksTensor[0])
                 for i in range(1, mirrorMasksTensor.shape[0]):
-                    mirrorMask = torch.logical_or(mirrorMask, squeezeMask(mirrorMasksTensor[i]))
+                    mirrorMask = torch.logical_or(mirrorMask, squeeze_mask(mirrorMasksTensor[i]))
             elif mirrorMasksTensor.ndim == 2:
                 mirrorMask = mirrorMasksTensor
         
         # Identify front window (closest to mirror)
         frontWindowIdx = None
         if mirrorMask is not None and len(windowMasks) > 0:
-            frontWindowIdx = getFrontWindowIndex(windowMasks, mirrorMask)
+            frontWindowIdx = get_front_window_index(windowMasks, mirrorMask)
         
         # Process front window mask
         updatedFrontMask = None
         if frontWindowIdx is not None:
             frontMask = windowMasks[frontWindowIdx]
-            corners = identifyCorners(frontMask)
+            corners = identify_corners(frontMask)
             
             # Load rotated labels for daylight openings
             daylightOpeningsRect = None
@@ -757,7 +757,7 @@ def processAndSaveMasks():
             if os.path.exists(rotatedLabelPath):
                 with open(rotatedLabelPath, 'r') as f:
                     rotatedLabelText = f.read()
-                rotatedLabels = rotatedLabelsToDict(rotatedLabelText)
+                rotatedLabels = rotated_labels_to_dict(rotatedLabelText)
                 if DAYLIGHT_OPENINGS_LABEL_KEY in rotatedLabels and rotatedLabels[DAYLIGHT_OPENINGS_LABEL_KEY]:
                     daylightOpeningsNorm = rotatedLabels[DAYLIGHT_OPENINGS_LABEL_KEY][0]
                     # Get image dimensions from mask
@@ -766,13 +766,13 @@ def processAndSaveMasks():
             
             # Get extrapolated curves behind mirror
             if mirrorMask is not None and corners:
-                extrapolatedCurves = extrapolateOutlineBehindMirror(frontMask, mirrorMask, corners, useCubic=False)
-                cornersNearMirror = getCornersNearMirror(frontMask, mirrorMask, corners)
+                extrapolatedCurves = extrapolate_outline_behind_mirror(frontMask, mirrorMask, corners, useCubic=False)
+                cornersNearMirror = get_corners_near_mirror(frontMask, mirrorMask, corners)
                 
                 # Find intersection point
                 intersectionPt = None
                 if extrapolatedCurves is not None and daylightOpeningsRect is not None:
-                    intersectionPt = getIntersectionPoint(
+                    intersectionPt = get_intersection_point(
                         extrapolatedCurves[0], 
                         extrapolatedCurves[1], 
                         daylightOpeningsRect, 
@@ -781,7 +781,7 @@ def processAndSaveMasks():
                 
                 # Update the mask
                 if cornersNearMirror is not None and extrapolatedCurves is not None:
-                    updatedFrontMask = updateMask(
+                    updatedFrontMask = update_mask(
                         frontMask,
                         cornersNearMirror[0],
                         cornersNearMirror[1],
@@ -790,9 +790,9 @@ def processAndSaveMasks():
                         intersectionPt
                     )
                 else:
-                    updatedFrontMask = updateMask(frontMask, None, None, None, None, None)
+                    updatedFrontMask = update_mask(frontMask, None, None, None, None, None)
             else:
-                updatedFrontMask = updateMask(frontMask, None, None, None, None, None)
+                updatedFrontMask = update_mask(frontMask, None, None, None, None, None)
         
         # Build output tensor with all masks
         # Keep original shape format (num_masks, 1, H, W)
@@ -823,7 +823,7 @@ def processAndSaveMasks():
     print(f"\nProcessing complete. Masks saved to {PROCESSED_MASK_FOLDER}")
 
 
-def displayMask(baseName):
+def display_mask(baseName):
     """
     Display a single image with window masks overlaid.
     Front window is shown in a different color, with corner markers.
@@ -850,7 +850,7 @@ def displayMask(baseName):
     # Load window masks - tensor shape is (num_masks, 1, H, W)
     windowMasksTensor = torch.load(windowMaskPath)
     # Convert to list of 2D masks
-    windowMasks = [squeezeMask(windowMasksTensor[i]) for i in range(windowMasksTensor.shape[0])]
+    windowMasks = [squeeze_mask(windowMasksTensor[i]) for i in range(windowMasksTensor.shape[0])]
     
     # Load mirror mask to identify front window
     mirrorMask = None
@@ -858,16 +858,16 @@ def displayMask(baseName):
         mirrorMasksTensor = torch.load(mirrorMaskPath)
         if mirrorMasksTensor.ndim >= 3 and mirrorMasksTensor.shape[0] > 0:
             # Combine all mirror masks into one (along the first dimension)
-            mirrorMask = squeezeMask(mirrorMasksTensor[0])
+            mirrorMask = squeeze_mask(mirrorMasksTensor[0])
             for i in range(1, mirrorMasksTensor.shape[0]):
-                mirrorMask = torch.logical_or(mirrorMask, squeezeMask(mirrorMasksTensor[i]))
+                mirrorMask = torch.logical_or(mirrorMask, squeeze_mask(mirrorMasksTensor[i]))
         elif mirrorMasksTensor.ndim == 2:
             mirrorMask = mirrorMasksTensor
     
     # Identify front window (closest to mirror)
     frontWindowIdx = None
     if mirrorMask is not None and len(windowMasks) > 0:
-        frontWindowIdx = getFrontWindowIndex(windowMasks, mirrorMask)
+        frontWindowIdx = get_front_window_index(windowMasks, mirrorMask)
     
     # Process front window mask - get updated mask with extrapolation
     updatedFrontMask = None
@@ -879,14 +879,14 @@ def displayMask(baseName):
     
     if frontWindowIdx is not None:
         frontMask = windowMasks[frontWindowIdx]
-        corners = identifyCorners(frontMask)
+        corners = identify_corners(frontMask)
         
         # Load rotated labels for daylight openings
         rotatedLabelPath = os.path.join(ROTATED_LABELS_FOLDER, f"{baseName}.txt")
         if os.path.exists(rotatedLabelPath):
             with open(rotatedLabelPath, 'r') as f:
                 rotatedLabelText = f.read()
-            rotatedLabels = rotatedLabelsToDict(rotatedLabelText)
+            rotatedLabels = rotated_labels_to_dict(rotatedLabelText)
             if DAYLIGHT_OPENINGS_LABEL_KEY in rotatedLabels and rotatedLabels[DAYLIGHT_OPENINGS_LABEL_KEY]:
                 daylightOpeningsNorm = rotatedLabels[DAYLIGHT_OPENINGS_LABEL_KEY][0]
                 imgWidth, imgHeight = image.size
@@ -894,12 +894,12 @@ def displayMask(baseName):
         
         # Get extrapolated curves behind mirror
         if mirrorMask is not None and corners:
-            extrapolatedCurves = extrapolateOutlineBehindMirror(frontMask, mirrorMask, corners, useCubic=False)
-            cornersNearMirror = getCornersNearMirror(frontMask, mirrorMask, corners)
+            extrapolatedCurves = extrapolate_outline_behind_mirror(frontMask, mirrorMask, corners, useCubic=False)
+            cornersNearMirror = get_corners_near_mirror(frontMask, mirrorMask, corners)
             
             # Find intersection point
             if extrapolatedCurves is not None and daylightOpeningsRect is not None:
-                intersectionPt = getIntersectionPoint(
+                intersectionPt = get_intersection_point(
                     extrapolatedCurves[0], 
                     extrapolatedCurves[1], 
                     daylightOpeningsRect, 
@@ -908,7 +908,7 @@ def displayMask(baseName):
             
             # Update the mask
             if cornersNearMirror is not None and extrapolatedCurves is not None:
-                updatedFrontMask = updateMask(
+                updatedFrontMask = update_mask(
                     frontMask,
                     cornersNearMirror[0],
                     cornersNearMirror[1],
@@ -918,10 +918,10 @@ def displayMask(baseName):
                 )
             else:
                 # Just smooth the original mask
-                updatedFrontMask = updateMask(frontMask, None, None, None, None, None)
+                updatedFrontMask = update_mask(frontMask, None, None, None, None, None)
         else:
             # Just smooth the original mask
-            updatedFrontMask = updateMask(frontMask, None, None, None, None, None)
+            updatedFrontMask = update_mask(frontMask, None, None, None, None, None)
     
     # Create overlay for masks
     maskOverlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
@@ -971,13 +971,13 @@ def displayMask(baseName):
             xValues = np.arange(0, imgWidth)
             
             # Plot first curve (before first corner)
-            y1 = evalPolynomial(extrapolatedCurves[0], xValues)
+            y1 = eval_polynomial(extrapolatedCurves[0], xValues)
             # Clip to image bounds
             mask1 = (y1 >= 0) & (y1 < imgHeight)
             plt.plot(xValues[mask1], y1[mask1], 'c-', linewidth=5, label='Curve 1 (before)', zorder=6)
             
             # Plot second curve (after last corner)
-            y2 = evalPolynomial(extrapolatedCurves[1], xValues)
+            y2 = eval_polynomial(extrapolatedCurves[1], xValues)
             # Clip to image bounds
             mask2 = (y2 >= 0) & (y2 < imgHeight)
             plt.plot(xValues[mask2], y2[mask2], 'm-', linewidth=5, label='Curve 2 (after)', zorder=6)
@@ -997,7 +997,7 @@ def displayMask(baseName):
     plt.show()
 
 
-def displayProcessedMasks():
+def display_processed_masks():
     """
     Display images with window masks overlaid.
     Iterates through all images and calls displayMask for each.
@@ -1007,9 +1007,30 @@ def displayProcessedMasks():
     for file in files:
         
         baseName = file.split('.')[0]
-        displayMask(baseName)
+        display_mask(baseName)
+
+
+# Backwards-compatible aliases (deprecated)
+rotatedLabelsToDict = rotated_labels_to_dict
+squeezeMask = squeeze_mask
+distanceBetweenMasks = distance_between_masks
+getFrontWindowIndex = get_front_window_index
+identifyCorners = identify_corners
+fitQuadratic = fit_quadratic
+fitCubic = fit_cubic
+extrapolateOutlineBehindMirror = extrapolate_outline_behind_mirror
+evalPolynomial = eval_polynomial
+isPointInRotatedRect = is_point_in_rotated_rect
+getMirrorCentroid = get_mirror_centroid
+getIntersectionPoint = get_intersection_point
+updateMask = update_mask
+smoothMask = smooth_mask
+getCornersNearMirror = get_corners_near_mirror
+processAndSaveMasks = process_and_save_masks
+displayMask = display_mask
+displayProcessedMasks = display_processed_masks
 
 
 if __name__ == "__main__":
-    processAndSaveMasks()
-    displayProcessedMasks()
+    process_and_save_masks()
+    display_processed_masks()

@@ -1,4 +1,7 @@
+"""Convert polygon text files into DXF polylines."""
+
 import os
+
 import ezdxf
 
 from config import (
@@ -6,28 +9,18 @@ from config import (
     DXF_FOLDER
 )
 
-'''
-Input format (from polygon files):
-x1 y1 x2 y2 x3 y3 ... xn yn (each x, y pair is a corner of a polygon sorted counter-clockwise,
-                             each line contains one polygon)
-
-Output:
-DXF files with each polygon as a closed polyline
-'''
-
-
-def loadPolygons(filePath):
+def load_polygons(file_path: str):
     """
     Load polygons from a text file.
     
     Args:
-        filePath: Path to the polygon file
+        file_path: Path to the polygon file
     
     Returns:
         List of polygons, where each polygon is a list of (x, y) tuples
     """
     polygons = []
-    with open(filePath, 'r') as f:
+    with open(file_path, 'r', encoding='utf-8') as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -39,13 +32,13 @@ def loadPolygons(filePath):
     return polygons
 
 
-def polygonsToDxf(polygons, outputPath):
+def polygons_to_dxf(polygons, output_path: str) -> None:
     """
     Convert polygons to a DXF file.
     
     Args:
         polygons: List of polygons, where each polygon is a list of (x, y) tuples
-        outputPath: Path to save the DXF file
+        output_path: Path to save the DXF file
     """
     # Create a new DXF document
     doc = ezdxf.new(dxfversion='R2010')
@@ -64,7 +57,7 @@ def polygonsToDxf(polygons, outputPath):
         msp.add_lwpolyline(flipped_polygon, close=True)
     
     # Save the DXF file
-    doc.saveas(outputPath)
+    doc.saveas(output_path)
 
 
 def run():
@@ -77,20 +70,25 @@ def run():
     polygon_files = [f for f in os.listdir(POLYGON_FOLDER) if f.endswith('.txt')]
     
     for polygon_file in polygon_files:
-        baseFileName = os.path.splitext(polygon_file)[0]
-        inputPath = os.path.join(POLYGON_FOLDER, polygon_file)
-        outputPath = os.path.join(DXF_FOLDER, f"{baseFileName}.dxf")
+        base_name = os.path.splitext(polygon_file)[0]
+        input_path = os.path.join(POLYGON_FOLDER, polygon_file)
+        output_path = os.path.join(DXF_FOLDER, f"{base_name}.dxf")
         
         try:
-            polygons = loadPolygons(inputPath)
+            polygons = load_polygons(input_path)
             if polygons:
-                polygonsToDxf(polygons, outputPath)
+                polygons_to_dxf(polygons, output_path)
             else:
                 print(f"Warning: No polygons found in {polygon_file}")
         except Exception as e:
             print(f"Error processing {polygon_file}: {e}")
     
     print(f"\nDXF files saved to: {DXF_FOLDER}")
+
+
+# Backwards-compatible aliases (deprecated)
+loadPolygons = load_polygons
+polygonsToDxf = polygons_to_dxf
 
 
 if __name__ == "__main__":

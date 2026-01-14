@@ -961,7 +961,7 @@ class WindowShapesGUI:
             for f in files:
                 name = os.path.splitext(f)[0]
                 try:
-                    horizontal_align.alignImage(
+                    horizontal_align.align_image(
                         name, 
                         self.input_folder, 
                         ORIGINAL_LABELS_FOLDER,
@@ -990,7 +990,6 @@ class WindowShapesGUI:
         """Thread worker for mask creation."""
         try:
             import create_masks
-            from create_masks import createMaskFromImage
             
             # Build model once
             self.log("Loading SAM3 model...")
@@ -1013,11 +1012,11 @@ class WindowShapesGUI:
                     base_name = os.path.splitext(f)[0]
                     
                     # Create window mask
-                    mask = createMaskFromImage(image_path, processor, "Side window")
+                    mask = create_masks.create_mask_from_image(image_path, processor, "Side window")
                     torch.save(mask, os.path.join(output_folder, f"{base_name}.pt"))
                     
                     # Create mirror mask
-                    mirror_mask = createMaskFromImage(image_path, processor, "Side mirror")
+                    mirror_mask = create_masks.create_mask_from_image(image_path, processor, "Side mirror")
                     torch.save(mirror_mask, os.path.join(SIDE_MIRROR_MASK_FOLDER, f"{base_name}.pt"))
                     
                     success += 1
@@ -1042,7 +1041,7 @@ class WindowShapesGUI:
     def _run_process_masks(self, files):
         """Thread worker for mask post-processing."""
         try:
-            import process_masks_new
+            import process_masks as process_masks
             
             output_folder = self.custom_output_folder.get() if self.use_custom_output.get() else PROCESSED_MASK_FOLDER
             os.makedirs(output_folder, exist_ok=True)
@@ -1064,16 +1063,16 @@ class WindowShapesGUI:
                     # Load window masks
                     window_masks_tensor = torch.load(window_mask_path, weights_only=False)
                     num_masks = window_masks_tensor.shape[0]
-                    window_masks = [process_masks_new.squeezeMask(window_masks_tensor[i]) for i in range(num_masks)]
+                    window_masks = [process_masks.squeeze_mask(window_masks_tensor[i]) for i in range(num_masks)]
                     
                     # Load mirror mask if available
                     mirror_mask = None
                     if os.path.exists(mirror_mask_path):
                         mirror_masks_tensor = torch.load(mirror_mask_path, weights_only=False)
                         if mirror_masks_tensor.ndim >= 3 and mirror_masks_tensor.shape[0] > 0:
-                            mirror_mask = process_masks_new.squeezeMask(mirror_masks_tensor[0])
+                            mirror_mask = process_masks.squeeze_mask(mirror_masks_tensor[0])
                             for i in range(1, mirror_masks_tensor.shape[0]):
-                                mirror_mask = torch.logical_or(mirror_mask, process_masks_new.squeezeMask(mirror_masks_tensor[i]))
+                                mirror_mask = torch.logical_or(mirror_mask, process_masks.squeeze_mask(mirror_masks_tensor[i]))
                         elif mirror_masks_tensor.ndim == 2:
                             mirror_mask = mirror_masks_tensor
                     
@@ -1114,16 +1113,15 @@ class WindowShapesGUI:
             
             for f in files:
                 base_name = os.path.splitext(f)[0]
-                mask_file = f"{base_name}.pt"
                 
                 try:
-                    masks = masks_to_polygons.loadProcessedMasks(base_name)
+                    masks = masks_to_polygons.load_processed_masks(base_name)
                     all_polygons = []
                     for mask in masks:
-                        polygons = masks_to_polygons.maskToPolygons(mask)
+                        polygons = masks_to_polygons.mask_to_polygons(mask)
                         all_polygons.extend(polygons)
                     
-                    with open(os.path.join(output_folder, f"{base_name}.txt"), 'w') as file:
+                    with open(os.path.join(output_folder, f"{base_name}.txt"), "w", encoding="utf-8") as file:
                         for polygon in all_polygons:
                             file.write(' '.join(map(str, polygon)) + '\n')
                     
@@ -1166,9 +1164,9 @@ class WindowShapesGUI:
                     if not os.path.exists(polygon_path):
                         raise FileNotFoundError(f"Polygon file not found: {polygon_path}")
                     
-                    polygons = polygons_to_dxf.loadPolygons(polygon_path)
+                    polygons = polygons_to_dxf.load_polygons(polygon_path)
                     if polygons:
-                        polygons_to_dxf.polygonsToDxf(polygons, output_path)
+                        polygons_to_dxf.polygons_to_dxf(polygons, output_path)
                         success += 1
                         self.log(f"  Created DXF: {base_name}")
                     else:
@@ -1209,7 +1207,11 @@ class WindowShapesGUI:
             os.makedirs(output_folder, exist_ok=True)
             
             # Initialize Gemini client
-            client = scale_dxf.genai.Client(api_key=scale_dxf.API_KEY)
+            try:
+                client = scale_dxf.create_client()
+            except Exception as e:
+                self.log(f"Error initializing Gemini client: {e}")
+                return
             
             success = 0
             failed = 0
@@ -1228,18 +1230,18 @@ class WindowShapesGUI:
                         raise FileNotFoundError(f"DXF file not found: {dxf_path}")
                     
                     # Estimate dimensions
-                    dimensions = scale_dxf.estimateDimensions(client, image_path)
+                    dimensions = scale_dxf.estimate_dimensions(client, image_path)
                     if dimensions is None:
                         raise ValueError("Failed to estimate dimensions")
                     
                     # Get bounding box
-                    bbox = scale_dxf.getDxfBoundingBox(dxf_path)
+                    bbox = scale_dxf.get_dxf_bounding_box(dxf_path)
                     if bbox is None:
                         raise ValueError("Failed to get DXF bounding box")
                     
                     # Calculate scale and create scaled DXF
-                    scale_factor = scale_dxf.calculateScaleFactor(bbox, dimensions)
-                    scale_dxf.createScaledDxf(dxf_path, output_path, scale_factor)
+                    scale_factor = scale_dxf.calculate_scale_factor(bbox, dimensions)
+                    scale_dxf.create_scaled_dxf(dxf_path, output_path, scale_factor)
                     
                     success += 1
                     self.log(f"  Scaled: {base_name} (factor: {scale_factor:.4f})")

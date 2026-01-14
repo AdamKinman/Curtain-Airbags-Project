@@ -11,8 +11,8 @@ import json
 import ezdxf
 from google import genai
 from google.genai import types
+from typing import List, Optional
 
-from image_files import is_image_file
 from pathlib import Path
 
 from config import (
@@ -38,11 +38,20 @@ def _load_dotenv_local(env_path: Path) -> None:
 _load_dotenv_local(Path(__file__).with_name(".env"))
 
 API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    raise RuntimeError(
-        "Missing GEMINI_API_KEY. Define it in a .env file in the WindowShapes folder "
-        "or in the environment."
-    )
+
+
+def get_api_key() -> str:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "Missing GEMINI_API_KEY. Define it in a .env file in the WindowShapes folder "
+            "or in the environment."
+        )
+    return api_key
+
+
+def create_client(api_key: Optional[str] = None) -> genai.Client:
+    return genai.Client(api_key=api_key or get_api_key())
 
 # Prompt template for Gemini to estimate window dimensions
 DIMENSION_PROMPT = """
@@ -56,51 +65,53 @@ Use this format:
 """
 
 
-def loadImage(imagePath):
+def load_image(image_path: str) -> types.Part:
     """
     Load an image file and return it as a Gemini-compatible Part object.
     
     Args:
-        imagePath: Path to the image file
+        image_path: Path to the image file
     
     Returns:
         types.Part object containing the image data
     """
-    with open(imagePath, "rb") as f:
-        imageBytes = f.read()
-    return types.Part.from_bytes(data=imageBytes, mime_type="image/jpeg")
+    ext = os.path.splitext(image_path)[1].lower()
+    mime_type = "image/png" if ext == ".png" else "image/jpeg"
+    with open(image_path, "rb") as f:
+        image_bytes = f.read()
+    return types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
 
 
-def estimateDimensions(client, imagePath):
+def estimate_dimensions(client: genai.Client, image_path: str):
     """
     Use Gemini API to estimate the dimensions of side windows in a car image.
     
     Args:
         client: Gemini API client
-        imagePath: Path to the car image
+        image_path: Path to the car image
     
     Returns:
         Tuple of (width_mm, height_mm) estimated dimensions in millimeters,
         or None if estimation fails
     """
-    image = loadImage(imagePath)
+    image = load_image(image_path)
     
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=[DIMENSION_PROMPT, image],
     )
     
-    responseText = response.text
+    response_text = response.text
     
     # Extract JSON from the response
-    jsonMatch = re.search(r'\{[^}]*"width"[^}]*"height"[^}]*\}', responseText, re.DOTALL)
-    if not jsonMatch:
+    json_match = re.search(r'\{[^}]*"width"[^}]*"height"[^}]*\}', response_text, re.DOTALL)
+    if not json_match:
         # Try alternative pattern
-        jsonMatch = re.search(r'\{[^}]*\}', responseText, re.DOTALL)
+        json_match = re.search(r'\{[^}]*\}', response_text, re.DOTALL)
     
-    if jsonMatch:
+    if json_match:
         try:
-            dimensions = json.loads(jsonMatch.group())
+            dimensions = json.loads(json_match.group())
             width = float(dimensions.get("width", 0))
             height = float(dimensions.get("height", 0))
             if width > 0 and height > 0:
@@ -108,47 +119,47 @@ def estimateDimensions(client, imagePath):
         except (json.JSONDecodeError, ValueError, TypeError):
             pass
     
-    print(f"Warning: Could not parse dimensions from response for {imagePath}")
+    print(f"Warning: Could not parse dimensions from response for {image_path}")
     return None
 
 
-def getDxfBoundingBox(dxfPath):
+def get_dxf_bounding_box(dxf_path: str):
     """
     Calculate the bounding box of all entities in a DXF file.
     
     Args:
-        dxfPath: Path to the DXF file
+        dxf_path: Path to the DXF file
     
     Returns:
         Tuple of (minX, minY, maxX, maxY) representing the bounding box in pixels,
         or None if the file contains no valid entities
     """
-    doc = ezdxf.readfile(dxfPath)
+    doc = ezdxf.readfile(dxf_path)
     msp = doc.modelspace()
     
-    minX = float('inf')
-    minY = float('inf')
-    maxX = float('-inf')
-    maxY = float('-inf')
+    min_x = float("inf")
+    min_y = float("inf")
+    max_x = float("-inf")
+    max_y = float("-inf")
     
-    hasEntities = False
+    has_entities = False
     
     for entity in msp:
         if entity.dxftype() == 'LWPOLYLINE':
             for x, y, *_ in entity.get_points():
-                minX = min(minX, x)
-                minY = min(minY, y)
-                maxX = max(maxX, x)
-                maxY = max(maxY, y)
-                hasEntities = True
+                min_x = min(min_x, x)
+                min_y = min(min_y, y)
+                max_x = max(max_x, x)
+                max_y = max(max_y, y)
+                has_entities = True
     
-    if not hasEntities:
+    if not has_entities:
         return None
     
-    return (minX, minY, maxX, maxY)
+    return (min_x, min_y, max_x, max_y)
 
 
-def calculateScaleFactor(dxfBoundingBox, estimatedDimensionsMm):
+def calculate_scale_factor(dxf_bounding_box, estimated_dimensions_mm):
     """
     Calculate the scale factor to convert DXF coordinates to millimeters.
     
@@ -157,29 +168,28 @@ def calculateScaleFactor(dxfBoundingBox, estimatedDimensionsMm):
     scale factors for uniform scaling.
     
     Args:
-        dxfBoundingBox: Tuple of (minX, minY, maxX, maxY) in pixels
-        estimatedDimensionsMm: Tuple of (width_mm, height_mm) in millimeters
+        dxf_bounding_box: Tuple of (minX, minY, maxX, maxY) in pixels
+        estimated_dimensions_mm: Tuple of (width_mm, height_mm) in millimeters
     
     Returns:
         Scale factor (multiply DXF coordinates by this value to get mm)
     """
-    minX, minY, maxX, maxY = dxfBoundingBox
-    widthMm, heightMm = estimatedDimensionsMm
+    min_x, min_y, max_x, max_y = dxf_bounding_box
+    width_mm, height_mm = estimated_dimensions_mm
     
-    dxfWidth = maxX - minX
-    dxfHeight = maxY - minY
+    dxf_width = max_x - min_x
+    dxf_height = max_y - min_y
     
     # Calculate scale factors for width and height
-    scaleX = widthMm / dxfWidth if dxfWidth > 0 else 1.0
-    scaleY = heightMm / dxfHeight if dxfHeight > 0 else 1.0
+    scale_x = width_mm / dxf_width if dxf_width > 0 else 1.0
+    scale_y = height_mm / dxf_height if dxf_height > 0 else 1.0
     
     # Use average scale factor for uniform scaling
-    scaleFactor = (scaleX + scaleY) / 2.0
-    
-    return scaleFactor
+    scale_factor = (scale_x + scale_y) / 2.0
+    return scale_factor
 
 
-def createScaledDxf(inputDxfPath, outputDxfPath, scaleFactor):
+def create_scaled_dxf(input_dxf_path: str, output_dxf_path: str, scale_factor: float) -> None:
     """
     Create a scaled version of a DXF file.
     
@@ -187,120 +197,119 @@ def createScaledDxf(inputDxfPath, outputDxfPath, scaleFactor):
     1 unit in the output DXF corresponds to 1 millimeter.
     
     Args:
-        inputDxfPath: Path to the source DXF file
-        outputDxfPath: Path for the scaled output DXF file
-        scaleFactor: Factor to multiply all coordinates by
+        input_dxf_path: Path to the source DXF file
+        output_dxf_path: Path for the scaled output DXF file
+        scale_factor: Factor to multiply all coordinates by
     """
-    doc = ezdxf.readfile(inputDxfPath)
+    doc = ezdxf.readfile(input_dxf_path)
     msp = doc.modelspace()
     
     # Scale all LWPOLYLINE entities
     for entity in msp:
         if entity.dxftype() == 'LWPOLYLINE':
             # Get original points and scale them
-            originalPoints = list(entity.get_points())
-            scaledPoints = [(x * scaleFactor, y * scaleFactor) for x, y, *_ in originalPoints]
+            original_points = list(entity.get_points())
+            scaled_points = [(x * scale_factor, y * scale_factor) for x, y, *_ in original_points]
             
             # Clear and set new points
-            entity.set_points(scaledPoints)
+            entity.set_points(scaled_points)
     
     # Save the scaled DXF
-    doc.saveas(outputDxfPath)
+    doc.saveas(output_dxf_path)
 
 
-def processImage(client, imageFileName):
+def process_image(client: genai.Client, image_file_name: str) -> bool:
     """
     Process a single car image: estimate dimensions and create scaled DXF.
     
     Args:
         client: Gemini API client
-        imageFileName: Name of the image file (e.g., "A_Fia_03.jpg")
+        image_file_name: Name of the image file (e.g., "A_Fia_03.jpg")
     
     Returns:
         True if processing succeeded, False otherwise
     """
-    baseName = os.path.splitext(imageFileName)[0]
-    imagePath = os.path.join(ORIGINAL_IMAGE_FOLDER, imageFileName)
-    inputDxfPath = os.path.join(DXF_FOLDER, f"{baseName}.dxf")
-    outputDxfPath = os.path.join(SCALED_DXF_FOLDER, f"{baseName}.dxf")
+    base_name = os.path.splitext(image_file_name)[0]
+    image_path = os.path.join(ORIGINAL_IMAGE_FOLDER, image_file_name)
+    input_dxf_path = os.path.join(DXF_FOLDER, f"{base_name}.dxf")
+    output_dxf_path = os.path.join(SCALED_DXF_FOLDER, f"{base_name}.dxf")
     
     # Check if corresponding DXF exists
-    if not os.path.exists(inputDxfPath):
-        print(f"Skipping {imageFileName}: No corresponding DXF file found")
+    if not os.path.exists(input_dxf_path):
+        print(f"Skipping {image_file_name}: No corresponding DXF file found")
         return False
     
-    print(f"Processing {imageFileName}...")
+    print(f"Processing {image_file_name}...")
     
     # Estimate dimensions using Gemini
-    dimensions = estimateDimensions(client, imagePath)
+    dimensions = estimate_dimensions(client, image_path)
     if dimensions is None:
         print(f"  Failed to estimate dimensions")
         return False
     
-    widthMm, heightMm = dimensions
-    print(f"  Estimated dimensions: {widthMm:.0f}mm x {heightMm:.0f}mm")
+    width_mm, height_mm = dimensions
+    print(f"  Estimated dimensions: {width_mm:.0f}mm x {height_mm:.0f}mm")
     
     # Get DXF bounding box
-    boundingBox = getDxfBoundingBox(inputDxfPath)
-    if boundingBox is None:
+    bounding_box = get_dxf_bounding_box(input_dxf_path)
+    if bounding_box is None:
         print(f"  Failed to read DXF bounding box")
         return False
     
-    minX, minY, maxX, maxY = boundingBox
-    dxfWidth = maxX - minX
-    dxfHeight = abs(maxY - minY)  # abs() because Y might be flipped
-    print(f"  DXF dimensions: {dxfWidth:.0f}px x {dxfHeight:.0f}px")
+    min_x, min_y, max_x, max_y = bounding_box
+    dxf_width = max_x - min_x
+    dxf_height = abs(max_y - min_y)  # abs() because Y might be flipped
+    print(f"  DXF dimensions: {dxf_width:.0f}px x {dxf_height:.0f}px")
     
     # Calculate scale factor
-    scaleFactor = calculateScaleFactor(boundingBox, dimensions)
-    print(f"  Scale factor: {scaleFactor:.4f} (1px = {scaleFactor:.4f}mm)")
+    scale_factor = calculate_scale_factor(bounding_box, dimensions)
+    print(f"  Scale factor: {scale_factor:.4f} (1px = {scale_factor:.4f}mm)")
     
     # Create scaled DXF
-    createScaledDxf(inputDxfPath, outputDxfPath, scaleFactor)
-    print(f"  Saved scaled DXF to: {outputDxfPath}")
+    create_scaled_dxf(input_dxf_path, output_dxf_path, scale_factor)
+    print(f"  Saved scaled DXF to: {output_dxf_path}")
     
     return True
 
 
-def run(imageFileNames=None):
+def run(image_file_names: List[str]) -> None:
     """
     Process car images and create scaled DXF files.
     
     Args:
-        imageFileNames: List of image file names to process.
-                       If None, processes all images with corresponding DXF files.
+        image_file_names: List of image file names to process.
     """
-    assert imageFileNames is not None, "Attempted to scale all files, which would lead to many API calls. If this is intended, then remove this line."
-    assert len(imageFileNames) < 15, "Attempted to scale many files, which would lead to many API calls. If this is intended, then remove this line."
+    if not image_file_names:
+        raise ValueError("No image files provided")
 
     os.makedirs(SCALED_DXF_FOLDER, exist_ok=True)
     
     # Initialize Gemini client
-    client = genai.Client(api_key=API_KEY)
-    
-    # Get list of images to process
-    if imageFileNames is None:
-        # Find all images that have corresponding DXF files
-        dxfFiles = set(os.path.splitext(f)[0] for f in os.listdir(DXF_FOLDER) if f.endswith('.dxf'))
-        imageFileNames = [
-            f for f in os.listdir(ORIGINAL_IMAGE_FOLDER)
-            if is_image_file(f) and os.path.splitext(f)[0] in dxfFiles
-        ]
-    
-    successCount = 0
-    failCount = 0
-    
-    for imageFileName in imageFileNames:
+    client = create_client()
+
+    success_count = 0
+    fail_count = 0
+
+    for image_file_name in image_file_names:
         try:
-            if processImage(client, imageFileName):
-                successCount += 1
+            if process_image(client, image_file_name):
+                success_count += 1
             else:
-                failCount += 1
+                fail_count += 1
         except Exception as e:
-            print(f"Error processing {imageFileName}: {e}")
-            failCount += 1
+            print(f"Error processing {image_file_name}: {e}")
+            fail_count += 1
     
-    print(f"\nCompleted: {successCount} succeeded, {failCount} failed")
+    print(f"\nCompleted: {success_count} succeeded, {fail_count} failed")
+
+
+# Backwards-compatible aliases (deprecated)
+loadImage = load_image
+estimateDimensions = estimate_dimensions
+getDxfBoundingBox = get_dxf_bounding_box
+calculateScaleFactor = calculate_scale_factor
+createScaledDxf = create_scaled_dxf
+processImage = process_image
 
 
 if __name__ == "__main__":
